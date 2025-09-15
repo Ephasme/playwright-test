@@ -4,3 +4,10 @@ dist/
 .vscode/
 *.log
 .env
+
+gmail-token.json
+gmail-credentials.json
+cookies.json
+
+# Screenshots for debugging
+screenshots/

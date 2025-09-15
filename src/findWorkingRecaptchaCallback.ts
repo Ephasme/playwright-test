@@ -1,3 +1,4 @@
+// External library types
 import type { Page } from "playwright";
 
 export interface CallbackInfo {

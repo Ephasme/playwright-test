@@ -4,3 +4,5 @@
 - If you don't find the documentation on Context7 please look it up from the internet.
 - Never use bad type conversions like `any` or `as unknown as`.
 - Always describe your tasks and use todo lists when your doing a complex task.
+- Please use PNPM as package manager
+- Don't create examples or documentation except explicitely asked

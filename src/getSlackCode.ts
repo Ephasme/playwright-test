@@ -1,381 +1,328 @@
-import { google } from "googleapis";
-import { OAuth2Client } from "google-auth-library";
-import * as fs from "fs/promises";
-import * as path from "path";
-import * as readline from "readline";
-// import { fromZonedTime } from "date-fns-tz"; // Not needed for simple timestamp comparison
-import {
-  format,
-  formatISO,
-  addMinutes,
-  isAfter,
-  differenceInSeconds,
-} from "date-fns";
-
-const SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
-const TOKEN_PATH = path.join(process.cwd(), "gmail-token.json");
-const CREDENTIALS_PATH = path.join(process.cwd(), "gmail-credentials.json");
+import { formatISO } from "date-fns";
+import { getSlackVerificationCode } from "./email-verification/index.js";
+import type { Page, Locator } from 'playwright';
 
 /**
- * Get Slack verification code from Gmail, searching for emails after a specific timestamp
+ * Handle cookie acceptance banners that might block workspace clicks
+ * Optimized for Slack: OneTrust banners (based on HTML analysis) + Slack-specific patterns
  */
-export async function getSlackVerificationCode(
-  searchAfterTimestamp: Date,
-  maxWaitMinutes: number = 3
-): Promise<string> {
-  try {
-    // Load credentials
-    const credentialsContent = await fs.readFile(CREDENTIALS_PATH, "utf8");
-    const credentials = JSON.parse(credentialsContent);
-    const credData = credentials.web || credentials.installed;
-    if (!credData) {
-      throw new Error(
-        "Invalid credentials format - missing web or installed section"
-      );
-    }
-    const { client_id, client_secret, redirect_uris } = credData;
-
-    // Setup OAuth2 client with loopback for desktop apps (current Google recommendation)
-    const redirectUri = "http://127.0.0.1:3000";
-    const oauth2Client = new OAuth2Client(
-      client_id,
-      client_secret,
-      redirectUri
-    );
-
-    // Load or get tokens
-    let token;
-    try {
-      const tokenContent = await fs.readFile(TOKEN_PATH, "utf8");
-      token = JSON.parse(tokenContent);
-      oauth2Client.setCredentials(token);
-    } catch (error) {
-      // First time - need to authenticate
-      const authUrl = oauth2Client.generateAuthUrl({
-        access_type: "offline",
-        scope: SCOPES,
-      });
-
-      // Start local server to handle OAuth callback
-      console.log("🔄 Starting OAuth flow...");
-      const { code } = await startLocalServerAndGetCode(authUrl);
-      console.log(
-        `🔑 Got OAuth code: ${code ? code.substring(0, 20) + "..." : "null"}`
-      );
-
-      console.log("🔄 Exchanging code for tokens...");
-      const { tokens } = await oauth2Client.getToken(code);
-      console.log("✅ Successfully got tokens");
-      await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens, null, 2));
-      oauth2Client.setCredentials(tokens);
-    }
-
-    // Initialize Gmail API
-    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
-
-    return await pollForSlackCode(gmail, searchAfterTimestamp, maxWaitMinutes);
-  } catch (error) {
-    console.error("Error getting Slack verification code:", error);
-    throw error;
-  }
-}
-
-/**
- * Extract verification code from email message
- */
-function extractCodeFromMessage(messageData: any): string | null {
-  const body = getEmailBody(messageData.payload);
-  if (!body) {
-    console.log("⚠️ No email body found");
-    return null;
-  }
-
-  console.log(`📄 Email body sample: ${body.substring(0, 200)}...`);
-
-  // Slack verification code format: QGI-T68 (3 letters, dash, 2-3 alphanumeric)
-  const slackCodePattern = /([A-Z]{3}-[A-Z0-9]{2,3})/;
-
-  const match = body.match(slackCodePattern);
-  if (match && match[1]) {
-    console.log(`✅ Found Slack code: ${match[1]}`);
-    return match[1];
-  }
-
-  return null;
-}
-
-/**
- * Extract email body from message payload
- */
-function getEmailBody(payload: any): string | null {
-  let body = "";
-
-  if (payload.parts) {
-    for (const part of payload.parts) {
-      if (part.mimeType === "text/plain" || part.mimeType === "text/html") {
-        if (part.body?.data) {
-          body += Buffer.from(part.body.data, "base64").toString("utf8");
-        }
-      } else if (part.parts) {
-        const nestedBody = getEmailBody(part);
-        if (nestedBody) body += nestedBody;
-      }
-    }
-  } else if (payload.body?.data) {
-    body = Buffer.from(payload.body.data, "base64").toString("utf8");
-  }
-
-  return body || null;
-}
-
-/**
- * Poll Gmail for Slack verification code that arrives after a specific timestamp
- */
-async function pollForSlackCode(
-  gmail: any,
-  searchAfterTimestamp: Date,
-  maxWaitMinutes: number
-): Promise<string> {
-  const startTime = new Date();
-  const maxWaitMinutes_ms = maxWaitMinutes * 60 * 1000;
-  const pollIntervalMs = 5000; // Poll every 5 seconds
-
-  console.log(
-    `🔍 Polling for Slack verification emails after: ${formatISO(
-      searchAfterTimestamp
-    )}`
-  );
-  console.log(
-    `⏱️ Will wait up to ${maxWaitMinutes} minutes, checking every 5 seconds`
-  );
-
-  while (
-    differenceInSeconds(new Date(), startTime) * 1000 <
-    maxWaitMinutes_ms
-  ) {
-    try {
-      // Convert timestamp to Gmail search format (YYYY/MM/DD)
-      const searchDateString = format(searchAfterTimestamp, "yyyy/MM/dd");
-      const query = `from:slack.com subject:"confirmation code" after:${searchDateString}`;
-
-      console.log(
-        `🔄 Searching Gmail... (${differenceInSeconds(
-          new Date(),
-          startTime
-        )}s elapsed)`
-      );
-
-      const response = await gmail.users.messages.list({
-        userId: "me",
-        q: query,
-        maxResults: 10,
-      });
-
-      const messages = response.data.messages;
-      console.log(`📧 Found ${messages?.length || 0} emails matching search`);
-
-      if (messages && messages.length > 0) {
-        // Check each message to see if it's newer than our timestamp
-        for (const message of messages) {
-          if (!message.id) continue;
-
-          const fullMessage = await gmail.users.messages.get({
-            userId: "me",
-            id: message.id,
-            format: "full",
-          });
-
-          if (!fullMessage.data) continue;
-
-          // Check if this email was sent after our timestamp
-          // Gmail's internalDate is always in UTC (milliseconds since epoch)
-          const emailTimestamp = new Date(
-            parseInt(fullMessage.data.internalDate)
-          );
-
-          // Debug: Show timestamp comparison
-          console.log(`🕐 Timestamp comparison:`);
-          console.log(`   Search after: ${formatISO(searchAfterTimestamp)}`);
-          console.log(`   Email sent at: ${formatISO(emailTimestamp)}`);
-          console.log(
-            `   Email is newer: ${isAfter(
-              emailTimestamp,
-              searchAfterTimestamp
-            )}`
-          );
-
-          if (isAfter(emailTimestamp, searchAfterTimestamp)) {
-            console.log(
-              `📨 ✅ Processing fresh email from: ${formatISO(emailTimestamp)}`
-            );
-
-            // Debug: show subject line
-            const subject = getSubject(fullMessage.data.payload?.headers || []);
-            console.log(`📋 Subject: ${subject}`);
-
-            const code = extractCodeFromMessage(fullMessage.data);
-            console.log(`🔍 Extracted code: ${code || "none"}`);
-
-            if (code) {
-              console.log(`✅ Found fresh verification code: ${code}`);
-              return code;
-            }
-          } else {
-            console.log(
-              `⏭️ ❌ Skipping old email from: ${formatISO(emailTimestamp)}`
-            );
-          }
-        }
-      }
-
-      // Wait before next poll
-      console.log(
-        `⏳ No new emails found, waiting 5 seconds before next check...`
-      );
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-    } catch (error) {
-      console.error("Error during polling:", error);
-      // Continue polling despite errors
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-    }
-  }
-
-  const elapsedMinutes = Math.round(
-    differenceInSeconds(new Date(), startTime) / 60
-  );
-  throw new Error(
-    `No Slack verification code received within ${maxWaitMinutes} minutes (waited ${elapsedMinutes} minutes)`
-  );
-}
-
-/**
- * Extract subject from email headers
- */
-function getSubject(headers: any[]): string | null {
-  if (!headers) return null;
-  const subjectHeader = headers.find(
-    (header) => header.name?.toLowerCase() === "subject"
-  );
-  return subjectHeader?.value || null;
-}
-
-/**
- * Start local server and handle OAuth2 callback
- */
-async function startLocalServerAndGetCode(
-  authUrl: string
-): Promise<{ code: string }> {
-  const http = await import("http");
-  const { parse } = await import("url");
-  const { exec } = await import("child_process");
-
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      console.log(`📥 Received callback: ${req.url}`);
-
-      if (req.url) {
-        const parsedUrl = parse(req.url, true);
-        console.log(`📋 Parsed URL:`, {
-          pathname: parsedUrl.pathname,
-          query: parsedUrl.query,
-        });
-
-        if (parsedUrl.query.code) {
-          // Success page
-          res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(`
-            <html>
-              <head><title>Authorization Success</title></head>
-              <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-                <h1 style="color: green;">✅ Authorization Successful!</h1>
-                <p>You can now close this browser window and return to your application.</p>
-              </body>
-            </html>
-          `);
-
-          console.log(
-            `✅ Successfully extracted code: ${parsedUrl.query.code}`
-          );
-          server.close();
-          resolve({ code: parsedUrl.query.code as string });
-        } else if (parsedUrl.query.error) {
-          // Error page
-          res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(`
-            <html>
-              <head><title>Authorization Error</title></head>
-              <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-                <h1 style="color: red;">❌ Authorization Failed</h1>
-                <p>Error: ${parsedUrl.query.error}</p>
-                <p>Description: ${
-                  parsedUrl.query.error_description || "Unknown error"
-                }</p>
-              </body>
-            </html>
-          `);
-
-          server.close();
-          reject(new Error(`OAuth error: ${parsedUrl.query.error}`));
-        } else {
-          // Show what we received for debugging
-          console.log(`⚠️ No code or error found in callback`);
-          console.log(`📋 Full query:`, parsedUrl.query);
-
-          // Send a basic response to show the callback was received
-          res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(`
-            <html>
-              <head><title>OAuth Callback</title></head>
-              <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-                <h1>OAuth Callback Received</h1>
-                <p>URL: ${req.url}</p>
-                <p>Query: ${JSON.stringify(parsedUrl.query)}</p>
-              </body>
-            </html>
-          `);
-        }
-      } else {
-        console.log(`⚠️ No URL received in callback`);
-        res.writeHead(400, { "Content-Type": "text/plain" });
-        res.end("No URL received");
-      }
-    });
-
-    server.listen(3000, "127.0.0.1", () => {
-      console.log("\n🔐 Gmail Authorization Required");
-      console.log("📱 Opening browser for authentication...");
-      console.log("🌐 If browser doesn't open automatically, visit:");
-      console.log(authUrl);
-
-      // Try to open browser automatically
-      const platform = process.platform;
-      let command = "";
-
-      if (platform === "darwin") command = `open "${authUrl}"`;
-      else if (platform === "win32") command = `start "" "${authUrl}"`;
-      else command = `xdg-open "${authUrl}"`;
-
-      exec(command, (error) => {
-        if (error) {
-          console.log("⚠️ Could not open browser automatically");
-        }
-      });
-    });
-
-    server.on("error", (err) => {
-      reject(new Error(`Server error: ${err.message}`));
-    });
-
-    // Timeout after 5 minutes
-    setTimeout(() => {
-      server.close();
-      reject(
-        new Error(
-          "Authorization timeout - no response received within 5 minutes"
-        )
-      );
-    }, 5 * 60 * 1000);
+export async function dismissCookieBanners(page: Page): Promise<void> {
+  console.log("🍪 Checking for cookie banners...");
+  
+  // Take initial screenshot to see what's on the page before banner detection
+  await page.screenshot({ 
+    path: `screenshots/before-cookie-banner-detection-${Date.now()}.png`,
+    fullPage: true 
   });
+  
+  // First, check if OneTrust banner is present (more targeted approach)
+  const oneTrustBanner = page.locator('#onetrust-banner-sdk');
+  console.log("🔍 Checking for OneTrust banner (#onetrust-banner-sdk)...");
+  
+  const oneTrustVisible = await oneTrustBanner.isVisible({ timeout: 2000 });
+  console.log(`   → OneTrust banner visible: ${oneTrustVisible}`);
+  
+  if (oneTrustVisible) {
+    console.log("✅ Detected OneTrust cookie banner");
+    await page.screenshot({ 
+      path: `screenshots/found-onetrust-banner-${Date.now()}.png`,
+      fullPage: true 
+    });
+    
+    // Try the accept button first
+    const acceptBtn = oneTrustBanner.locator('#onetrust-accept-btn-handler');
+    const acceptVisible = await acceptBtn.isVisible({ timeout: 1000 });
+    console.log(`   → OneTrust accept button visible: ${acceptVisible}`);
+    
+    if (acceptVisible) {
+      console.log("✅ Clicking OneTrust 'Accept All Cookies' button");
+      await acceptBtn.click();
+      console.log("✅ OneTrust cookie banner dismissed");
+      await page.waitForTimeout(1000);
+      await page.screenshot({ 
+        path: `screenshots/after-onetrust-accept-${Date.now()}.png`,
+        fullPage: true 
+      });
+      return;
+    }
+    
+    // Fallback to reject if accept isn't available
+    const rejectBtn = oneTrustBanner.locator('#onetrust-reject-all-handler');
+    const rejectVisible = await rejectBtn.isVisible({ timeout: 1000 });
+    console.log(`   → OneTrust reject button visible: ${rejectVisible}`);
+    
+    if (rejectVisible) {
+      console.log("⚠️ Accept button not found, clicking 'Reject All Cookies' button");
+      await rejectBtn.click();
+      console.log("✅ OneTrust cookie banner dismissed (rejected)");
+      await page.waitForTimeout(1000);
+      await page.screenshot({ 
+        path: `screenshots/after-onetrust-reject-${Date.now()}.png`,
+        fullPage: true 
+      });
+      return;
+    }
+    
+    console.log("⚠️ OneTrust banner found but no clickable buttons detected");
+  }
+  
+  // Fallback to Slack-specific cookie banners (if not OneTrust)
+  const slackCookieSelectors = [
+    '[data-qa="banner_acknowledge_button"]',
+    '.p-banner__acknowledge',
+    '[data-qa="cookie_banner_accept"]'
+  ];
+
+  console.log("🔍 Checking for Slack-specific cookie banners...");
+  for (const selector of slackCookieSelectors) {
+    try {
+      console.log(`🔍 Checking selector: ${selector}`);
+      const cookieButton = page.locator(selector).first();
+      const isVisible = await cookieButton.isVisible({ timeout: 1000 });
+      console.log(`   → Visible: ${isVisible}`);
+      
+      if (isVisible) {
+        console.log(`✅ Found Slack cookie banner with selector: ${selector}`);
+        await page.screenshot({ 
+          path: `screenshots/found-slack-banner-${selector.replace(/[^a-zA-Z0-9]/g, '_')}-${Date.now()}.png`,
+          fullPage: true 
+        });
+        await cookieButton.click();
+        console.log("✅ Slack cookie banner dismissed");
+        await page.waitForTimeout(1000);
+        await page.screenshot({ 
+          path: `screenshots/after-slack-banner-dismissed-${Date.now()}.png`,
+          fullPage: true 
+        });
+        return;
+      }
+    } catch (error) {
+      console.log(`   → Error checking selector ${selector}:`, error instanceof Error ? error.message : String(error));
+      continue;
+    }
+  }
+  
+  // Take screenshot showing what's on the page when no banners are detected
+  await page.screenshot({ 
+    path: `screenshots/no-cookie-banners-found-${Date.now()}.png`,
+    fullPage: true 
+  });
+  
+  // Debug: List all elements that might be related to cookies/banners
+  console.log("🔍 Debug: Searching for any elements that might be cookie-related...");
+  const cookieRelatedSelectors = [
+    '*[id*="cookie"]',
+    '*[class*="cookie"]',
+    '*[data-qa*="cookie"]',
+    '*[id*="banner"]',
+    '*[class*="banner"]',
+    '*[data-qa*="banner"]',
+    '*[id*="consent"]',
+    '*[class*="consent"]',
+    'button[type="button"]:has-text("Accept")',
+    'button[type="button"]:has-text("Allow")',
+    'button[type="button"]:has-text("OK")',
+    'button[type="button"]:has-text("Got it")'
+  ];
+  
+  for (const debugSelector of cookieRelatedSelectors) {
+    try {
+      const elements = page.locator(debugSelector);
+      const count = await elements.count();
+      if (count > 0) {
+        console.log(`🔍 Found ${count} elements matching: ${debugSelector}`);
+        // Get text content of first few elements
+        for (let i = 0; i < Math.min(count, 3); i++) {
+          const text = await elements.nth(i).textContent();
+          const isVisible = await elements.nth(i).isVisible();
+          console.log(`   → Element ${i + 1}: "${text?.trim()}" (visible: ${isVisible})`);
+        }
+      }
+    } catch (error) {
+      // Ignore errors for debug selectors
+    }
+  }
+  
+  console.log("ℹ️ No cookie banners found (checked OneTrust and Slack-specific patterns)");
+}
+
+/**
+ * Verify that workspace click succeeded by checking for navigation/page changes
+ */
+/**
+ * Debug function to analyze all authenticate buttons on the page
+ */
+export async function debugAuthenticateButtons(page: Page, workspaceName: string): Promise<void> {
+  console.log(`🔍 === DEBUGGING AUTHENTICATE BUTTONS FOR WORKSPACE: ${workspaceName} ===`);
+  
+  // Check all button elements that might contain "Authenticate"
+  const allButtons = page.locator('button');
+  const buttonCount = await allButtons.count();
+  console.log(`📊 Total buttons on page: ${buttonCount}`);
+  
+  // Analyze each button
+  for (let i = 0; i < Math.min(buttonCount, 10); i++) { // Limit to 10 buttons to avoid spam
+    const button = allButtons.nth(i);
+    try {
+      const text = await button.textContent();
+      const isVisible = await button.isVisible();
+      const isEnabled = await button.isEnabled();
+      const classList = await button.getAttribute('class');
+      const dataQa = await button.getAttribute('data-qa');
+      
+      if (text && text.toLowerCase().includes('auth')) {
+        console.log(`🔘 AUTHENTICATE BUTTON FOUND:
+   → Index: ${i}
+   → Text: "${text?.trim()}"
+   → Visible: ${isVisible}
+   → Enabled: ${isEnabled}
+   → Classes: ${classList || 'none'}
+   → Data-QA: ${dataQa || 'none'}`);
+      }
+    } catch (error) {
+      console.log(`   → Error analyzing button ${i}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  
+  // Check specific selectors we use
+  const selectors = [
+    'button.p-get_started_email_form__button:has-text("Authenticate")',
+    'button:has-text("Authenticate")',
+    '[data-qa*="auth" i]:has-text("Authenticate")'
+  ];
+  
+  console.log(`🔍 Testing specific selectors:`);
+  for (const selector of selectors) {
+    try {
+      const element = page.locator(selector).first();
+      const count = await element.count();
+      if (count > 0) {
+        const isVisible = await element.isVisible();
+        const isEnabled = await element.isEnabled();
+        const text = await element.textContent();
+        console.log(`✅ Selector "${selector}":
+   → Count: ${count}
+   → Text: "${text?.trim()}"
+   → Visible: ${isVisible}
+   → Enabled: ${isEnabled}`);
+      } else {
+        console.log(`❌ Selector "${selector}": No elements found`);
+      }
+    } catch (error) {
+      console.log(`❌ Selector "${selector}": Error - ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  
+  // Check workspace-specific context
+  try {
+    const workspaceContainer = page
+      .locator(".p-workspace_info__title")
+      .filter({ hasText: workspaceName });
+    const workspaceCount = await workspaceContainer.count();
+    console.log(`🏢 Workspace "${workspaceName}" containers found: ${workspaceCount}`);
+    
+    if (workspaceCount > 0) {
+      const contextualButtons = workspaceContainer.locator('xpath=ancestor::*').locator('button');
+      const contextualCount = await contextualButtons.count();
+      console.log(`🔘 Buttons in workspace context: ${contextualCount}`);
+      
+      for (let i = 0; i < Math.min(contextualCount, 3); i++) {
+        const button = contextualButtons.nth(i);
+        const text = await button.textContent();
+        const isVisible = await button.isVisible();
+        const isEnabled = await button.isEnabled();
+        console.log(`   → Button ${i}: "${text?.trim()}" (visible: ${isVisible}, enabled: ${isEnabled})`);
+      }
+    }
+  } catch (error) {
+    console.log(`❌ Error analyzing workspace context: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  
+  console.log(`🔍 === END AUTHENTICATE BUTTONS DEBUG ===`);
+}
+
+export async function verifyWorkspaceClickSucceeded(page: Page, workspaceName: string): Promise<boolean> {
+  console.log("🔍 Verifying workspace click succeeded...");
+  
+  const startUrl = page.url();
+  console.log(`📍 Current URL: ${startUrl}`);
+  
+  try {
+    // Wait for one of these success indicators:
+    await Promise.race([
+      // URL change (most reliable)
+      page.waitForURL(url => url.toString() !== startUrl, { timeout: 10000 }),
+      
+      // Slack workspace loading indicators
+      page.waitForSelector('.p-workspace_sidebar', { timeout: 10000 }),
+      page.waitForSelector('[data-qa="workspace_name"]', { timeout: 10000 }),
+      page.waitForSelector('.p-channel_sidebar', { timeout: 10000 }),
+      
+      // Loading state indicators
+      page.waitForSelector('.p-loading_screen', { timeout: 10000 }),
+    ]);
+    
+    const newUrl = page.url();
+    console.log(`✅ Navigation detected! New URL: ${newUrl}`);
+    
+    // Take screenshot for debugging
+    await page.screenshot({ 
+      path: `screenshots/workspace-${workspaceName}-success.png`,
+      fullPage: false 
+    });
+    
+    return true;
+  } catch (error) {
+    console.log(`⚠️ No navigation detected within 10 seconds`);
+    
+    // Take debugging screenshot
+    await page.screenshot({ 
+      path: `screenshots/workspace-${workspaceName}-stuck.png`,
+      fullPage: true 
+    });
+    
+    const finalUrl = page.url();
+    console.log(`📍 Final URL (unchanged): ${finalUrl}`);
+    
+    return false;
+  }
+}
+
+/**
+ * Configuration for Slack login flow handling
+ */
+export interface SlackLoginFlowConfig {
+  page: Page;
+  workspaceName: string;
+  maxWaitMinutes?: number;
+  searchConfirmationMailAfter?: Date;
+}
+
+/**
+ * Enter the Slack verification code into the 6 input fields
+ */
+export async function enterSlackCode(page: Page, code: string): Promise<void> {
+  console.log(`🔑 Entering Slack code: ${code}`);
+
+  // Slack code should be in format ABC-DEF
+  const cleanCode = code.replace("-", "");
+  
+  if (cleanCode.length !== 6) {
+    throw new Error(`Invalid Slack code length: expected 6 characters, got ${cleanCode.length}`);
+  }
+
+  // Fill each digit input
+  for (let i = 0; i < 6; i++) {
+    const digitInput = page.locator(`input[aria-label="digit ${i + 1} of 6"]`);
+    const digit = cleanCode[i];
+    if (!digit) {
+      throw new Error(`Missing digit at position ${i + 1}`);
+    }
+    await digitInput.fill(digit);
+    await page.waitForTimeout(100); // Small delay between inputs
+  }
+
+  console.log("✅ Code entered successfully");
 }
 
 /**
@@ -383,14 +330,19 @@ async function startLocalServerAndGetCode(
  * Detects which page we're on and proceeds accordingly
  */
 export async function handleSlackLoginFlow(
-  page: any,
-  workspaceName: string,
-  maxWaitMinutes: number = 3
+  config: SlackLoginFlowConfig
 ): Promise<void> {
+  const { page, workspaceName, maxWaitMinutes = 3, searchConfirmationMailAfter } = config;
   console.log("🚀 Starting smart Slack login flow detection...");
+
+  // Handle cookie banners first before anything else
+  await dismissCookieBanners(page);
 
   // Wait a bit for the page to load and determine which state we're in
   await page.waitForTimeout(2000);
+  
+  // Track if we've already attempted workspace selection to avoid duplicates
+  let workspaceSelectionAttempted = false;
 
   try {
     // Check if we're on the workspace selection page (email verification was skipped)
@@ -400,15 +352,19 @@ export async function handleSlackLoginFlow(
       (await page.locator('[data-qa="current_workspaces_open_link"]').count()) >
       0;
 
-    if (workspaceListExists && workspaceLinksExist) {
+    if (workspaceListExists && workspaceLinksExist && !workspaceSelectionAttempted) {
       console.log(
         "✅ Detected workspace selection page - email verification was skipped"
       );
       console.log("🎯 Proceeding directly to workspace selection...");
-      await page.screenshot({ path: "workspace-selection-page.png" });
+      await page.screenshot({ path: "screenshots/workspace-selection-page.png" });
 
+      workspaceSelectionAttempted = true;
+      console.log("📍 Attempting workspace selection (first attempt)");
       await clickWorkspace(page, workspaceName);
       return;
+    } else if (workspaceListExists && workspaceLinksExist && workspaceSelectionAttempted) {
+      console.log("⚠️ Workspace selection already attempted, skipping duplicate on initial detection");
     }
 
     // Check if we're on the email verification page
@@ -421,10 +377,16 @@ export async function handleSlackLoginFlow(
       console.log(
         "✅ Detected email verification page - proceeding with code verification..."
       );
-      await page.screenshot({ path: "email-verification-page.png" });
+      // Take screenshot when deciding to look for emails in mailbox
+      console.log("📸 Taking screenshot to verify the screen is asking for a code...");
+      await page.screenshot({ 
+        path: `screenshots/email-verification-decision-${Date.now()}.png`,
+        fullPage: true 
+      });
       const code = await waitForVerificationPageAndGetCode(
         page,
-        maxWaitMinutes
+        maxWaitMinutes,
+        searchConfirmationMailAfter
       );
       await enterSlackCode(page, code);
 
@@ -435,6 +397,7 @@ export async function handleSlackLoginFlow(
       await page.waitForSelector('[data-qa="current_workspaces_open_link"]', {
         timeout: 10000,
       });
+      workspaceSelectionAttempted = true;
       await clickWorkspace(page, workspaceName);
       return;
     }
@@ -450,20 +413,32 @@ export async function handleSlackLoginFlow(
     const delayedVerificationCheck =
       (await page.locator('input[aria-label="digit 1 of 6"]').count()) > 0;
 
-    if (delayedWorkspaceCheck) {
+    if (delayedWorkspaceCheck && !workspaceSelectionAttempted) {
       console.log("✅ Now detected workspace selection page");
+      workspaceSelectionAttempted = true;
       await clickWorkspace(page, workspaceName);
       return;
-    } else if (delayedVerificationCheck) {
+    } else if (delayedWorkspaceCheck && workspaceSelectionAttempted) {
+      console.log("⚠️ Workspace selection already attempted, skipping duplicate call");
+      return;
+    } else if (delayedVerificationCheck && !workspaceSelectionAttempted) {
       console.log("✅ Now detected email verification page");
+      // Take screenshot when deciding to look for emails in mailbox (delayed detection)
+      console.log("📸 Taking screenshot to verify the screen is asking for a code (delayed detection)...");
+      await page.screenshot({ 
+        path: `screenshots/email-verification-delayed-decision-${Date.now()}.png`,
+        fullPage: true 
+      });
       const code = await waitForVerificationPageAndGetCode(
         page,
-        maxWaitMinutes
+        maxWaitMinutes,
+        searchConfirmationMailAfter
       );
       await enterSlackCode(page, code);
       await page.waitForSelector('[data-qa="current_workspaces_open_link"]', {
         timeout: 10000,
       });
+      workspaceSelectionAttempted = true;
       await clickWorkspace(page, workspaceName);
       return;
     }
@@ -475,7 +450,7 @@ export async function handleSlackLoginFlow(
     console.error("❌ Error in Slack login flow:", error);
 
     // Debug: Take a screenshot and show current page info
-    await page.screenshot({ path: "slack-login-flow-error.png" });
+    await page.screenshot({ path: "screenshots/slack-login-flow-error.png" });
     const currentUrl = page.url();
     const pageTitle = await page.title();
     console.log(`📍 Current URL: ${currentUrl}`);
@@ -487,10 +462,12 @@ export async function handleSlackLoginFlow(
 
 /**
  * Wait for Slack verification page to load and then get the verification code
+ * @param searchConfirmationMailAfter - Optional timestamp from when the continue button was clicked
  */
 export async function waitForVerificationPageAndGetCode(
-  page: any,
-  maxWaitMinutes: number = 3
+  page: Page,
+  maxWaitMinutes: number = 3,
+  searchConfirmationMailAfter?: Date
 ): Promise<string> {
   // Wait for verification page to load
   console.log("⏳ Waiting for verification page to load...");
@@ -498,34 +475,44 @@ export async function waitForVerificationPageAndGetCode(
     timeout: 30000,
   });
 
-  // Record the timestamp when verification page loads
-  // No timezone conversion needed - Date objects represent moments in time
-  const pageLoadTime = new Date();
+  // Use the provided timestamp if available, otherwise capture it now
+  // This ensures we don't miss emails that arrived while the page was loading
+  const searchAfterTimestamp = searchConfirmationMailAfter || new Date();
 
-  console.log(`📅 Verification page loaded at: ${formatISO(pageLoadTime)}`);
+  console.log(`📅 Searching for emails after: ${formatISO(searchAfterTimestamp)}`);
+  if (searchConfirmationMailAfter) {
+    console.log("✅ Using timestamp from continue button click");
+  } else {
+    console.log("⚠️ No button click timestamp provided, using current time");
+  }
 
   // Fetch verification code that arrives AFTER this time
   console.log("📧 Waiting for verification email...");
-  const code = await getSlackVerificationCode(pageLoadTime, maxWaitMinutes);
+  const code = await getSlackVerificationCode(searchAfterTimestamp, maxWaitMinutes);
 
   return code;
 }
 
 /**
- * Find and click on a specific Slack workspace by name
+ * Find and click on a specific Slack workspace by name with verification
  */
 export async function clickWorkspace(
-  page: any,
+  page: Page,
   workspaceName: string
 ): Promise<void> {
   console.log(`🔍 Looking for workspace: ${workspaceName}`);
 
   try {
-    // Wait for workspace list to load
+    // Step 1: Handle cookie banners before attempting to click
+    await dismissCookieBanners(page);
+    
+    // Step 2: Wait for workspace list to load
     await page.waitForSelector('[data-qa="current_workspaces_open_link"]', {
       timeout: 10000,
     });
 
+    let clickSucceeded = false;
+    
     // Option 1: Try to find by aria-label (most specific)
     const workspaceByAriaLabel = page.locator(
       `[aria-label="Open ${workspaceName}"]`
@@ -533,116 +520,233 @@ export async function clickWorkspace(
     if ((await workspaceByAriaLabel.count()) > 0) {
       console.log(`✅ Found workspace by aria-label: Open ${workspaceName}`);
       await workspaceByAriaLabel.click();
-      return;
+      clickSucceeded = await verifyWorkspaceClickSucceeded(page, workspaceName);
+      console.log(`✅ Click succeeded: ${clickSucceeded}`);
+      if (clickSucceeded) return;
     }
 
     // Option 2: Find by workspace title within the workspace info
-    const workspaceByTitle = page
-      .locator(".p-workspace_info__title")
-      .filter({ hasText: workspaceName });
-    if ((await workspaceByTitle.count()) > 0) {
-      console.log(`✅ Found workspace by title: ${workspaceName}`);
-      // Click on the parent workspace link
-      await workspaceByTitle
-        .locator(
-          'xpath=ancestor::a[contains(@class, "p-workspaces_list__link")]'
-        )
-        .click();
-      return;
+    if (!clickSucceeded) {
+      const workspaceByTitle = page
+        .locator(".p-workspace_info__title")
+        .filter({ hasText: workspaceName });
+      if ((await workspaceByTitle.count()) > 0) {
+        console.log(`✅ Found workspace by title: ${workspaceName}`);
+        // Click on the parent workspace link
+        await workspaceByTitle
+          .locator(
+            'xpath=ancestor::a[contains(@class, "p-workspaces_list__link")]'
+          )
+          .click();
+        clickSucceeded = await verifyWorkspaceClickSucceeded(page, workspaceName);
+        console.log(`✅ Click succeeded: ${clickSucceeded}`);
+        if (clickSucceeded) return;
+      }
     }
 
-    // Option 3: Find authenticate button within the specific workspace
-    const workspaceContainer = page
-      .locator(".p-workspace_info__title")
-      .filter({ hasText: workspaceName })
-      .locator("xpath=ancestor::a");
-    const authenticateButton = workspaceContainer.locator(
-      'button:has-text("Authenticate")'
-    );
-    if ((await authenticateButton.count()) > 0) {
+    // Option 3: Find authenticate button (try multiple approaches with proper waiting)
+    if (!clickSucceeded) {
+      console.log(`🔍 Looking for Authenticate button for workspace: ${workspaceName}`);
+      
+      // Try 3a: Direct button selection with specific classes
+      console.log(`🔍 Attempting direct class selector approach...`);
+      const directAuthButton = page.locator('button.p-get_started_email_form__button:has-text("Authenticate")');
+      try {
+        await directAuthButton.waitFor({ state: 'visible', timeout: 5000 });
+        console.log(`✅ Found authenticate button using direct class selector - checking if enabled`);
+        
+        // Check if button is enabled
+        const isEnabled = await directAuthButton.isEnabled();
+        console.log(`   → Button enabled: ${isEnabled}`);
+        
+        if (isEnabled) {
+          // Take screenshot before clicking for debugging
+          await page.screenshot({ 
+            path: `screenshots/before-auth-click-direct-${workspaceName}-${Date.now()}.png`,
+            fullPage: true 
+          });
+          
+          console.log(`🔘 Clicking authenticate button (direct selector)`);
+          await directAuthButton.click({ timeout: 10000 });
+          clickSucceeded = await verifyWorkspaceClickSucceeded(page, workspaceName);
+          console.log(`✅ Click succeeded: ${clickSucceeded}`);
+          if (clickSucceeded) return;
+        } else {
+          console.log(`⚠️ Direct authenticate button found but is disabled`);
+        }
+      } catch (error) {
+        console.log(`   → Direct selector failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
+      // Try 3b: Generic authenticate button
+      if (!clickSucceeded) {
+        console.log(`🔍 Attempting generic selector approach...`);
+        const genericAuthButton = page.locator('button:has-text("Authenticate")').first();
+        try {
+          await genericAuthButton.waitFor({ state: 'visible', timeout: 5000 });
+          console.log(`✅ Found authenticate button using generic selector - checking if enabled`);
+          
+          // Check if button is enabled
+          const isEnabled = await genericAuthButton.isEnabled();
+          console.log(`   → Button enabled: ${isEnabled}`);
+          
+          if (isEnabled) {
+            // Take screenshot before clicking for debugging
+            await page.screenshot({ 
+              path: `screenshots/before-auth-click-generic-${workspaceName}-${Date.now()}.png`,
+              fullPage: true 
+            });
+            
+            console.log(`🔘 Clicking authenticate button (generic selector)`);
+            await genericAuthButton.click({ timeout: 10000 });
+            clickSucceeded = await verifyWorkspaceClickSucceeded(page, workspaceName);
+            console.log(`✅ Click succeeded: ${clickSucceeded}`);
+            if (clickSucceeded) return;
+          } else {
+            console.log(`⚠️ Generic authenticate button found but is disabled`);
+          }
+        } catch (error) {
+          console.log(`   → Generic selector failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      
+      // Try 3c: Authenticate button within workspace context (original approach)
+      if (!clickSucceeded) {
+        console.log(`🔍 Attempting contextual selector approach...`);
+        const workspaceContainer = page
+          .locator(".p-workspace_info__title")
+          .filter({ hasText: workspaceName })
+          .locator("xpath=ancestor::*");
+        const contextualAuthButton = workspaceContainer.locator('button:has-text("Authenticate")');
+        try {
+          await contextualAuthButton.waitFor({ state: 'visible', timeout: 5000 });
+          console.log(`✅ Found authenticate button within workspace context - checking if enabled`);
+          
+          // Check if button is enabled
+          const isEnabled = await contextualAuthButton.isEnabled();
+          console.log(`   → Button enabled: ${isEnabled}`);
+          
+          if (isEnabled) {
+            // Take screenshot before clicking for debugging
+            await page.screenshot({ 
+              path: `screenshots/before-auth-click-contextual-${workspaceName}-${Date.now()}.png`,
+              fullPage: true 
+            });
+            
+            console.log(`🔘 Clicking authenticate button (contextual selector)`);
+            await contextualAuthButton.click({ timeout: 10000 });
+            clickSucceeded = await verifyWorkspaceClickSucceeded(page, workspaceName);
+            console.log(`✅ Click succeeded: ${clickSucceeded}`);
+            if (clickSucceeded) return;
+          } else {
+            console.log(`⚠️ Contextual authenticate button found but is disabled`);
+          }
+        } catch (error) {
+          console.log(`   → Contextual selector failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      
+      // Try 3d: Alternative selector approaches if all above failed
+      if (!clickSucceeded) {
+        console.log(`🔍 Trying alternative selector approaches...`);
+        
+        // Try by role first (most accessible approach)
+        try {
+          const roleAuthButton = page.getByRole('button', { name: /authenticate/i });
+          await roleAuthButton.waitFor({ state: 'visible', timeout: 5000 });
+          console.log(`✅ Found authenticate button using role selector`);
+          
+          const isEnabled = await roleAuthButton.isEnabled();
+          console.log(`   → Button enabled: ${isEnabled}`);
+          
+          if (isEnabled) {
+            await page.screenshot({ 
+              path: `screenshots/before-auth-click-role-${workspaceName}-${Date.now()}.png`,
+              fullPage: true 
+            });
+            
+            console.log(`🔘 Clicking authenticate button (role selector)`);
+            await roleAuthButton.click({ timeout: 10000 });
+            clickSucceeded = await verifyWorkspaceClickSucceeded(page, workspaceName);
+            console.log(`✅ Click succeeded: ${clickSucceeded}`);
+            if (clickSucceeded) return;
+          }
+        } catch (error) {
+          console.log(`   → Role selector failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        
+        // Try data-qa attributes
+        try {
+          const qaAuthButton = page.locator('[data-qa*="auth" i]:has-text("Authenticate"), [data-qa*="button" i]:has-text("Authenticate")').first();
+          await qaAuthButton.waitFor({ state: 'visible', timeout: 5000 });
+          console.log(`✅ Found authenticate button using data-qa selector`);
+          
+          const isEnabled = await qaAuthButton.isEnabled();
+          console.log(`   → Button enabled: ${isEnabled}`);
+          
+          if (isEnabled) {
+            await page.screenshot({ 
+              path: `screenshots/before-auth-click-qa-${workspaceName}-${Date.now()}.png`,
+              fullPage: true 
+            });
+            
+            console.log(`🔘 Clicking authenticate button (data-qa selector)`);
+            await qaAuthButton.click({ timeout: 10000 });
+            clickSucceeded = await verifyWorkspaceClickSucceeded(page, workspaceName);
+            console.log(`✅ Click succeeded: ${clickSucceeded}`);
+            if (clickSucceeded) return;
+          }
+        } catch (error) {
+          console.log(`   → Data-qa selector failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+
+    // If we reach here, either workspace wasn't found or clicks didn't work
+    if (!clickSucceeded) {
+      // Enhanced debugging: let's understand what authenticate buttons are available
+      console.log(`🔍 DEBUG: Analyzing all authenticate buttons on the page...`);
+      await debugAuthenticateButtons(page, workspaceName);
+      
+      // Take a debug screenshot
+      await page.screenshot({ 
+        path: `screenshots/workspace-${workspaceName}-debug.png`,
+        fullPage: true 
+      });
+      
+      // List available workspaces for debugging
+      const allWorkspaces = await page
+        .locator(".p-workspace_info__title")
+        .allTextContents();
       console.log(
-        `✅ Found authenticate button for workspace: ${workspaceName}`
+        `❌ Workspace click failed or workspace "${workspaceName}" not found. Available workspaces:`,
+        allWorkspaces
       );
-      await authenticateButton.click();
-      return;
+
+      throw new Error(
+        `Failed to successfully click workspace "${workspaceName}". This could be due to:\n` +
+        `1. Cookie banner or overlay blocking the click\n` +
+        `2. Workspace name mismatch\n` +
+        `3. Page navigation issues\n` +
+        `Available workspaces: ${allWorkspaces.join(", ")}\n` +
+        `Check the debug screenshot: workspace-${workspaceName}-debug.png`
+      );
     }
-
-    // If none of the above work, list available workspaces for debugging
-    const allWorkspaces = await page
-      .locator(".p-workspace_info__title")
-      .allTextContents();
-    console.log(
-      `❌ Workspace "${workspaceName}" not found. Available workspaces:`,
-      allWorkspaces
-    );
-
-    throw new Error(
-      `Workspace "${workspaceName}" not found. Available: ${allWorkspaces.join(
-        ", "
-      )}`
-    );
   } catch (error) {
     console.error(`❌ Error clicking workspace "${workspaceName}":`, error);
     throw error;
   }
 }
 
-/**
- * Enter verification code into Slack's split input fields
- */
-export async function enterSlackCode(page: any, code: string): Promise<void> {
-  // Slack codes are in format QGI-T68 (7 characters: 3 letters, dash, 2-3 chars)
-  if (!/^[A-Z]{3}-[A-Z0-9]{2,3}$/.test(code)) {
-    throw new Error(
-      `Invalid Slack code format, expected XXX-XXX, got: ${code}`
-    );
-  }
-
-  // Remove the dash: QGI-T68 becomes QGIT68
-  const codeWithoutDash = code.replace("-", "");
-  const characters = codeWithoutDash.split("");
-
-  // Fill each of the 6 input fields
-  for (let i = 0; i < 6; i++) {
-    const digitNumber = i + 1;
-    const selector = `input[aria-label="digit ${digitNumber} of 6"]`;
-
-    try {
-      await page.fill(selector, characters[i]);
-    } catch (error) {
-      throw new Error(`Failed to fill digit ${digitNumber}: ${error}`);
-    }
-  }
-
-  console.log(
-    `✅ Entered Slack verification code: ${code} (as ${codeWithoutDash})`
-  );
-}
-
-// Usage examples:
-/*
-
-// NEW: Smart all-in-one approach (RECOMMENDED)
-import { handleSlackLoginFlow } from './getSlackCode.js';
-
-// This handles BOTH scenarios automatically:
+// Function that combines everything
+// - If on workspace page: clicks the workspace
 // - If email verification page: waits for email, enters code, then selects workspace
-// - If workspace selection page: directly selects workspace
-await handleSlackLoginFlow(page, 'Padoa', 3);
+// USAGE:
+//   await handleSlackLoginFlow(page, 'Your Workspace Name');
+// That's it! It automatically detects which page you're on and does the right thing
 
-// MANUAL: Individual functions for specific scenarios
-import { clickWorkspace, waitForVerificationPageAndGetCode, enterSlackCode } from './getSlackCode.js';
-
-// Scenario 1: Already on workspace selection page
-await clickWorkspace(page, 'Padoa');
-
+// Example:
+// Scenario 1: Already logged in, on workspace selection page
+//   - It will click the workspace directly
 // Scenario 2: On email verification page
-const code = await waitForVerificationPageAndGetCode(page, 3);
-await enterSlackCode(page, code);
-
-// Scenario 3: Manual timing approach
-await page.waitForSelector('input[aria-label="digit 1 of 6"]');
-const verificationPageLoadTime = new Date();
-const code = await getSlackVerificationCode(verificationPageLoadTime, 3);
-await enterSlackCode(page, code);
-*/
+//   - It will wait for email, enter code, then click workspace

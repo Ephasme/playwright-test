@@ -1,6 +1,8 @@
+// External library imports
 import { chromium } from "playwright";
-import axios from "axios";
-import { z } from "zod";
+import env from "env-var";
+
+// Internal module imports
 import { findWorkingRecaptchaCallback } from "./findWorkingRecaptchaCallback.js";
 import { findTokenSubmissionCallback } from "./findTokenSubmissionCallback.js";
 import { injectTokenIntoGrecaptcha } from "./injectTokenIntoGrecaptcha.js";
@@ -15,40 +17,25 @@ import {
   enterSlackCode,
   clickWorkspace,
 } from "./getSlackCode.js";
-// Alternative approach if the first one doesn't work
-// import { injectTokenComprehensive } from "./injectTokenViaScriptManipulation.js";
 
-// Zod schema for Capsolver API response
-const CapsolverResponseSchema = z.object({
-  errorId: z
-    .number()
-    .int()
-    .describe("Error message: 0 - no error, 1 - with error"),
-  errorCode: z.string().optional().describe("errorCode: full list of errors"),
-  errorDescription: z.string().optional().describe("Error Description"),
-  status: z
-    .enum(["idle", "processing", "ready"])
-    .describe(
-      "Task status: idle - Waiting, processing - Under identification, ready - The identification is complete"
-    ),
-  solution: z
-    .object({
-      userAgent: z.string(),
-      gRecaptchaResponse: z.string(),
-    })
-    .optional()
-    .describe("Task result data containing userAgent and gRecaptchaResponse"),
-});
+// Captcha provider imports
+import { 
+  CapsolverProvider,
+  createCapsolverProvider,
+  SolveCaptchaProvider,
+  createSolveCaptchaProvider
+} from "./captcha/index.js";
+import type { 
+  CaptchaTaskConfig,
+  CapsolverConfig,
+  SolveCaptchaConfig
+} from "./captcha/index.js";
 
-type CapsolverResponse = z.infer<typeof CapsolverResponseSchema>;
-
-const client = axios.create();
-
-const CAPSOLVER_KEY =
-  "CAP-01F13ACBCB3AF5766CC3FC8D69A467D1D0B406CE6345DA10729475B457CAFBB4";
-const PAGE_URL =
-  "https://slack.com/get-started?entry_point=nav_menu#/createnew";
-const SITE_KEY = "6LcQQiYUAAAAADxJHrihACqD5wf3lksm9jbnRY5k";
+// Configuration from environment variables
+const SOLVECAPTCHA_KEY = env.get('SOLVECAPTCHA_API_KEY').required().asString();
+const PAGE_URL = env.get('PAGE_URL').required().asString();
+const SITE_KEY = env.get('SITE_KEY').required().asString();
+const USER_EMAIL = env.get('USER_EMAIL').required().asString();
 
 const browser = await chromium.launch();
 
@@ -62,7 +49,7 @@ await page.goto("https://slack.com/");
 
 await page.click("text=Sign in");
 
-await page.fill("input[type='email']", "loup.p@padoa-group.com");
+await page.fill("input[type='email']", USER_EMAIL);
 
 await page.click(".p-get_started_email_form__button");
 
@@ -74,73 +61,37 @@ console.log("Recaptcha callback:", recaptchaCallback);
 const tokenSubmissionCallback = await findTokenSubmissionCallback(page);
 console.log("Token submission callback:", tokenSubmissionCallback);
 
-console.log("Creating task");
-const capsolverResponse = await client.post(
-  "https://api.capsolver.com/createTask",
-  {
-    clientKey: CAPSOLVER_KEY,
-    task: {
-      type: "ReCaptchaV2Task",
-      websiteURL: PAGE_URL,
-      websiteKey: SITE_KEY,
-    },
-  }
-);
+// Create captcha provider instance
 
-console.log(`Waiting for task ${capsolverResponse.data.taskId} result`);
+// Option 1: Using Capsolver (current)
+ const solveCaptchaConfig: SolveCaptchaConfig = {
+   apiKey: SOLVECAPTCHA_KEY,
+ };
+const captchaProvider = new SolveCaptchaProvider(solveCaptchaConfig);
+// Or alternatively: const captchaProvider = createCapsolverProvider(capsolverConfig);
 
-let taskResultResponse;
-let finalResult;
-let attempts = 0;
-const maxAttempts = 60; // Maximum number of attempts (5 minutes with 5s intervals)
+// Option 2: Using SolveCaptcha (alternative)
+// const captchaProvider = new SolveCaptchaProvider(solveCaptchaConfig);
+// Or alternatively: const captchaProvider = createSolveCaptchaProvider(solveCaptchaConfig);
 
-while (attempts < maxAttempts) {
-  taskResultResponse = await client.post(
-    "https://api.capsolver.com/getTaskResult",
-    {
-      clientKey: CAPSOLVER_KEY,
-      taskId: capsolverResponse.data.taskId,
-    }
-  );
+// Configure captcha task
+const taskConfig: CaptchaTaskConfig = {
+  type: "ReCaptchaV2Task",
+  websiteURL: PAGE_URL,
+  websiteKey: SITE_KEY,
+};
 
-  const result = CapsolverResponseSchema.parse(taskResultResponse.data);
+console.log(`Solving captcha using ${captchaProvider.name} provider...`);
 
-  if (result.status === "ready") {
-    if (result.errorId === 1) {
-      throw new Error(
-        `Capsolver task failed: ${
-          result.errorDescription || result.errorCode || "Unknown error"
-        }`
-      );
-    } else if (result.errorId === 0) {
-      finalResult = result;
-      console.log(
-        `Task ${capsolverResponse.data.taskId} completed successfully`
-      );
-      break;
-    }
-  }
+// Solve the captcha using the provider
+const solution = await captchaProvider.solveCaptcha(taskConfig, {
+  maxAttempts: 60, // 5 minutes with 5s intervals
+  pollInterval: 5000, // 5 seconds
+});
 
-  console.log(
-    `Task status: ${result.status}, attempt ${attempts + 1}/${maxAttempts}`
-  );
-  attempts++;
+console.log("Captcha solved successfully!");
 
-  if (attempts < maxAttempts) {
-    await new Promise((resolve) => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
-  }
-}
-
-if (attempts >= maxAttempts) {
-  throw new Error(
-    `Task ${capsolverResponse.data.taskId} timed out after ${maxAttempts} attempts`
-  );
-}
-
-console.log(`Task ${capsolverResponse.data.taskId} final result:`, finalResult);
-
-// Most concise version for your specific callback
-if (!finalResult?.solution?.gRecaptchaResponse) {
+if (!solution.gRecaptchaResponse) {
   throw new Error("No gRecaptchaResponse found in the solution");
 }
 
@@ -164,7 +115,7 @@ await debugClientStructure(page, activeClientId);
 // Step 4: Use the comprehensive injection approach
 const injectionSuccess = await injectTokenIntoGrecaptcha(
   page,
-  finalResult.solution.gRecaptchaResponse
+  solution.gRecaptchaResponse
 );
 console.log("Token injection successful:", injectionSuccess);
 
@@ -228,26 +179,39 @@ await page.evaluate(
       console.error("Error calling callback:", error);
     }
   },
-  { token: finalResult.solution.gRecaptchaResponse, clientId: activeClientId }
+  { token: solution.gRecaptchaResponse, clientId: activeClientId }
 );
 
 console.log("Captcha solved");
 
 await page.waitForTimeout(1000);
 
-page.click("button[type='submit']");
+// Capture timestamp BEFORE clicking the continue button
+// This ensures we don't miss emails that arrive while the page is loading
+const searchConfirmationMailAfter = new Date();
+console.log(`🕐 Capturing timestamp before continue button click: ${searchConfirmationMailAfter.toISOString()}`);
+
+await page.click("button[type='submit']");
 
 await page.waitForTimeout(1000);
 
-await page.screenshot({ path: `example.png` });
+await page.screenshot({ path: `screenshots/example.png` });
 
 // Smart function that handles both email verification and workspace selection
-await handleSlackLoginFlow(page, "Padoa", 3);
+// Pass the timestamp from when we clicked the continue button
+await handleSlackLoginFlow({
+  page,
+  workspaceName: "Padoa",
+  maxWaitMinutes: 3,
+  searchConfirmationMailAfter
+});
 
 await page.waitForTimeout(1000);
 
-await page.screenshot({ path: `example2.png` });
+await page.screenshot({ path: `screenshots/example2.png` });
 
 await clickWorkspace(page, "Padoa");
 
-await page.screenshot({ path: `example3.png` });
+await page.waitForTimeout(3000);
+
+await page.screenshot({ path: `screenshots/example3.png` });
