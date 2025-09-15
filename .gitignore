@@ -5,8 +5,7 @@ dist/
 *.log
 .env
 
-gmail-token.json
-gmail-credentials.json
+google_credentials.json
 cookies.json
 
 # Screenshots for debugging

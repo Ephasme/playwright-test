@@ -1,0 +1,12 @@
+dist/
+node_modules/
+*.config.js
+*.config.mjs
+.next/
+coverage/
+screenshots/
+html_parts/
+pnpm-lock.yaml
+package-lock.json
+*.json
+*.md
