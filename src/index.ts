@@ -3,6 +3,10 @@ import { Storage } from '@google-cloud/storage';
 import { makeCookiesLoader } from './cookies/index.js';
 import { config } from './config.js';
 import { interceptSlackAuthWithCookies, SlackApiFactory } from './slack-api/index.js';
+import fs from 'fs';
+import removeMarkdown from 'remove-markdown';
+
+// Simplified - no complex types or extraction functions needed
 
 // Create Google Cloud Storage instance with service account credentials
 // Using environment variables for secure configuration
@@ -31,24 +35,27 @@ console.log('🚀 Testing Slack REAL client.userBoot API with intercepted token.
 try {
   const userBootData = await slackApi.clientUserBoot(workspaceUrl);
 
-  console.log('✅ client.userBoot SUCCESS!');
-  console.log('📊 Response structure:');
-  console.log(`  - ok: ${userBootData.ok}`);
-  console.log(`  - self.id: ${userBootData.self?.id}`);
-  console.log(`  - self.name: ${userBootData.self?.name}`);
-  console.log(`  - team.name: ${userBootData.team?.name}`);
+  console.log(`📋 Channels found: ${userBootData.channels.length}`);
+  console.log(`📋 First 5 channels: ${userBootData.channels.slice(0, 5).map(channel => channel.name).join(', ')}`);
 
-  if (userBootData.channels) {
-    console.log(`📋 Found ${userBootData.channels.length} channels:`);
-    userBootData.channels.slice(0, 5).forEach((channel: any) => {
-      console.log(`  - ${channel.name} (${channel.id}) [${channel.is_private ? 'private' : 'public'}]`);
+  const recentMessages = await slackApi.getRecentMessages(workspaceUrl);
+  console.log('📋 Recent messages:');
+  recentMessages.sample_channels.forEach((channel) => {
+    console.log(`  - ${channel.channel.name}: ${channel.messages.length} messages`);
+
+    // Just display basic message info
+    console.log(`\n📋 Latest messages in #${channel.channel.name}:`);
+    const messagesToProcess = channel.messages.slice(0, 3); // Process first 3 messages
+
+    messagesToProcess.forEach((message, index: number) => {
+      console.log(`\n  Message ${index + 1}:`);
+      console.log(`\n  Message keys: ${Object.keys(message)}`);
+      console.log(`\n  Message text: ${removeMarkdown(message.text)}`);
     });
-    if (userBootData.channels.length > 5) {
-      console.log(`  ... and ${userBootData.channels.length - 5} more channels`);
-    }
-  }
+  });
 
-  console.log('🎉 SUCCESS! Real client.userBoot API works with intercepted token!');
+  fs.writeFileSync('recentMessages.json', JSON.stringify(recentMessages, null, 2));
+
 
 } catch (error) {
   console.error('❌ client.userBoot failed:', error);
