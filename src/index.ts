@@ -1,9 +1,10 @@
 import { chromium } from 'playwright';
 import { Storage } from '@google-cloud/storage';
-import { makeCookiesLoader } from './cookies/index.js';
-import { config } from './config.js';
+import { makeCookiesLoader } from './cookie-management/index.js';
+import { config } from './config/index.js';
 import { interceptSlackAuthWithCookies, SlackApiFactory } from './slack-api/index.js';
 import fs from 'fs';
+import path from 'path';
 import removeMarkdown from 'remove-markdown';
 
 // Simplified - no complex types or extraction functions needed
@@ -54,7 +55,7 @@ try {
     });
   });
 
-  fs.writeFileSync('recentMessages.json', JSON.stringify(recentMessages, null, 2));
+  fs.writeFileSync(path.join('exports', 'recentMessages.json'), JSON.stringify(recentMessages, null, 2));
 
 
 } catch (error) {

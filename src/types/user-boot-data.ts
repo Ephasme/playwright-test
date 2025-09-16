@@ -10,9 +10,9 @@ import {
     LinksSchema,
     SubteamsSchema
 } from './base.js';
-import { ChannelSchema } from './channel.js';
-import { SimpleTeamSchema, WorkspaceSchema } from './team.js';
-import { SelfUserSchema, ImSchema } from './user.js';
+import { ChannelSchema } from './channel/index.js';
+import { SimpleTeamSchema, WorkspaceSchema } from './team/index.js';
+import { SelfUserSchema, ImSchema } from './user/index.js';
 
 // Main UserBootData schema that represents the complete JSON structure
 export const UserBootDataSchema = z.object({

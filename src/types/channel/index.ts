@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { StringId, Timestamp, BooleanFlag } from './base.js';
+import { StringId, Timestamp, BooleanFlag } from '../base.js';
 
 // Topic and Purpose schemas (common pattern in channels)
 export const TopicSchema = z.object({

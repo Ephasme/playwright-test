@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { StringId, Timestamp, BooleanFlag } from './base.js';
+import { StringId, Timestamp, BooleanFlag } from '../base.js';
 
 // Permission schemas
 export const PermissionTypeSchema = z.object({
