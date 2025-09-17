@@ -11,11 +11,21 @@ async function slackApiPlugin(fastify: FastifyInstance, options: SlackApiPluginO
     fastify.log.info('🔄 Initializing Slack API plugin...');
 
     try {
-        // Create Google Cloud Storage instance
-        const storage = new Storage({
+        // Create Google Cloud Storage instance with either file-based or env var credentials
+        const storageOptions: {
+            projectId: string;
+            keyFilename?: string;
+            credentials?: object;
+        } = {
             projectId: config.gcp.projectId,
-            keyFilename: config.gcp.credentialsPath,
-        });
+        };
+
+        // Use base64-encoded credentials from environment variable
+        const decodedCredentials = Buffer.from(config.gcp.credentialsBase64, 'base64').toString('utf-8');
+        storageOptions.credentials = JSON.parse(decodedCredentials);
+        fastify.log.info('🔐 Using base64-encoded credentials from environment variable');
+
+        const storage = new Storage(storageOptions);
 
         // Load and transform cookies from GCP
         const loadCookies = makeCookiesLoader(storage, {

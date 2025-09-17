@@ -4,13 +4,18 @@ import env from 'env-var';
  * Centralized configuration for all environment variables
  * This file contains all environment variable getters to ensure
  * consistent access and validation across the application
+ * 
+ * For Google Cloud Platform authentication, you can use either:
+ * - GOOGLE_APPLICATION_CREDENTIALS: Path to a service account key file (for local development)
+ * - GOOGLE_CREDENTIALS_BASE64: Base64-encoded JSON credentials (for production/Railway deployment)
  */
 export const config = {
     // Google Cloud Platform configuration
     gcp: {
         projectId: env.get('GCP_PROJECT_ID').required().asString(),
-        credentialsPath: env
-            .get('GOOGLE_APPLICATION_CREDENTIALS')
+        // GOOGLE_CREDENTIALS_BASE64 with base64-encoded JSON
+        credentialsBase64: env
+            .get('GOOGLE_CREDENTIALS_BASE64')
             .required()
             .asString(),
     },

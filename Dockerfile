@@ -46,8 +46,8 @@ RUN pnpm install --frozen-lockfile --prod
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Copy any additional necessary files (like google_credentials.json if needed)
-COPY google_credentials.json ./
+# Note: google_credentials.json is now handled via environment variables
+# No need to copy the file since credentials are passed as GOOGLE_CREDENTIALS_BASE64
 
 # Create a non-root user for security
 RUN groupadd -r appuser && useradd -r -g appuser appuser
