@@ -1,0 +1,49 @@
+meta {
+  name: Post Message
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/slack/messages
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "channel": "C1234567890",
+    "text": "Hello from Bruno!",
+    "thread_ts": "1234567890.123456"
+  }
+}
+
+docs {
+  # Post Message Endpoint
+  
+  Sends a new message to a Slack channel or thread.
+  
+  ## Request Body (JSON)
+  - `channel` (required): The ID of the channel to send the message to
+  - `text` (required): The message text content
+  - `thread_ts` (optional): Timestamp of the parent message if replying to a thread
+  - Additional Slack API parameters may be supported
+  
+  ## Response
+  - Complex Slack API response containing message details
+  - Returns 400 error for validation errors
+  - Returns 500 error if Slack API is not accessible
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return message response", function () {
+    const data = res.getBody();
+    expect(data).to.be.an('object');
+  });
+}

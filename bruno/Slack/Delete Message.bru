@@ -1,0 +1,46 @@
+meta {
+  name: Delete Message
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/api/slack/messages
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "channel": "C1234567890",
+    "ts": "1234567890.123456"
+  }
+}
+
+docs {
+  # Delete Message Endpoint
+  
+  Deletes a message from a Slack channel.
+  
+  ## Request Body (JSON)
+  - `channel` (required): The ID of the channel containing the message
+  - `ts` (required): The timestamp of the message to delete
+  
+  ## Response
+  - Complex Slack API response confirming deletion
+  - Returns 400 error for validation errors
+  - Returns 500 error if Slack API is not accessible
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return deletion response", function () {
+    const data = res.getBody();
+    expect(data).to.be.an('object');
+  });
+}

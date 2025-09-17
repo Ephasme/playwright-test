@@ -1,0 +1,41 @@
+meta {
+  name: List Conversations
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/slack/conversations
+}
+
+params:query {
+  types: public_channel,private_channel
+  ~limit: 100
+  ~cursor: 
+}
+
+docs {
+  # List Conversations Endpoint
+  
+  Retrieves a list of conversations (channels) from the Slack workspace.
+  
+  ## Query Parameters
+  - `types`: Comma-separated list of conversation types (public_channel, private_channel, mpim, im)
+  - `limit` (optional): Maximum number of conversations to return
+  - `cursor` (optional): Pagination cursor
+  
+  ## Response
+  - Complex conversations data structure containing channel information
+  - Returns 500 error if Slack API is not accessible
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return conversations data", function () {
+    const data = res.getBody();
+    expect(data).to.be.an('object');
+  });
+}

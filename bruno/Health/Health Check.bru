@@ -1,0 +1,36 @@
+meta {
+  name: Health Check
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/health
+}
+
+docs {
+  # Health Check Endpoint
+  
+  Returns the health status of the API server.
+  
+  ## Response
+  - `status`: Always returns "healthy" when the server is running
+  - `timestamp`: Current server timestamp in ISO format
+  - `slackApiReady`: Boolean indicating if Slack API connection is ready
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return healthy status", function () {
+    const data = res.getBody();
+    expect(data.status).to.equal("healthy");
+  });
+  
+  test("should have timestamp", function () {
+    const data = res.getBody();
+    expect(data.timestamp).to.be.a('string');
+  });
+}

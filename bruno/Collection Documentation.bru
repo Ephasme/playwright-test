@@ -1,0 +1,41 @@
+docs {
+  # Slack API Collection
+  
+  This Bruno collection contains all the API endpoints for the Fastify-based Slack API server.
+  
+  ## Overview
+  This API provides a REST interface to interact with Slack workspaces, allowing you to:
+  - Check API health and status
+  - Retrieve user and workspace boot data
+  - List conversations and channels
+  - Get conversation history and thread replies
+  - Send and delete messages
+  
+  ## Authentication
+  The API uses Slack workspace authentication configured on the server side. No additional authentication is required for these endpoints.
+  
+  ## Base URL
+  - **Local Development**: `http://localhost:3000`
+  - **Production**: Configure your production URL in the environment variables
+  
+  ## Environments
+  This collection includes two environments:
+  - `local`: For local development (port 3000)
+  - `production`: For production deployment (update the URL as needed)
+  
+  ## Folders
+  - **Health**: Health check and API status endpoints
+  - **Slack**: All Slack API related endpoints
+  
+  ## Error Handling
+  All endpoints return standard HTTP status codes:
+  - `200`: Success
+  - `400`: Bad Request (validation errors)
+  - `500`: Internal Server Error (Slack API errors)
+  
+  ## Getting Started
+  1. Select the appropriate environment (local/production)
+  2. Start with the Health Check to ensure the API is running
+  3. Use the API Status endpoint to see all available endpoints
+  4. Test the Slack endpoints with valid channel IDs and message data
+}

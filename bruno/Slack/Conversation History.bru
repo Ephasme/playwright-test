@@ -1,0 +1,54 @@
+meta {
+  name: Conversation History
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/slack/conversations/:channelId/history
+  body: none
+  auth: none
+}
+
+params:query {
+  ~cursor: 
+  ~latest: 
+  ~oldest: 
+  ~inclusive: true
+  ~limit: 100
+}
+
+params:path {
+  channelId: C069FAKNBR7
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return history data", function () {
+    const data = res.getBody();
+    expect(data).to.be.an('object');
+  });
+}
+
+docs {
+  # Conversation History Endpoint
+  
+  Retrieves message history for a specific conversation/channel.
+  
+  ## Path Parameters
+  - `channelId`: The ID of the channel to get history for (e.g., C1234567890)
+  
+  ## Query Parameters
+  - `cursor` (optional): Pagination cursor
+  - `latest` (optional): End of time range of messages to include in results
+  - `oldest` (optional): Start of time range of messages to include in results  
+  - `inclusive` (optional): Include messages with latest or oldest timestamp
+  - `limit` (optional): Maximum number of messages to return (default: 100)
+  
+  ## Response
+  - Complex message history data structure
+  - Returns 500 error if Slack API is not accessible
+}

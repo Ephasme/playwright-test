@@ -1,0 +1,30 @@
+meta {
+  name: Recent Messages
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/slack/recent-messages
+}
+
+docs {
+  # Recent Messages Endpoint
+  
+  Retrieves recent messages from the Slack workspace.
+  
+  ## Response
+  - Complex message data structure containing recent messages
+  - Returns 500 error if Slack API is not accessible
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return messages data", function () {
+    const data = res.getBody();
+    expect(data).to.be.an('object');
+  });
+}

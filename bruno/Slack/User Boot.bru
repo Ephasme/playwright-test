@@ -1,0 +1,30 @@
+meta {
+  name: User Boot
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/slack/user-boot
+}
+
+docs {
+  # User Boot Data Endpoint
+  
+  Retrieves user boot data from Slack workspace. This contains initial user and workspace information needed to bootstrap the application.
+  
+  ## Response
+  - Complex user boot data structure containing workspace and user information
+  - Returns 500 error if Slack API is not accessible
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return user boot data", function () {
+    const data = res.getBody();
+    expect(data).to.be.an('object');
+  });
+}

@@ -1,0 +1,54 @@
+meta {
+  name: Conversation Replies
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/slack/conversations/:channelId/replies/:timestamp
+}
+
+params:path {
+  channelId: C1234567890
+  timestamp: 1234567890.123456
+}
+
+params:query {
+  ~cursor: 
+  ~latest: 
+  ~oldest: 
+  ~inclusive: true
+  ~limit: 100
+}
+
+docs {
+  # Conversation Replies Endpoint
+  
+  Retrieves replies to a specific message thread in a conversation.
+  
+  ## Path Parameters
+  - `channelId`: The ID of the channel containing the thread (e.g., C1234567890)
+  - `timestamp`: The timestamp of the parent message (e.g., 1234567890.123456)
+  
+  ## Query Parameters
+  - `cursor` (optional): Pagination cursor
+  - `latest` (optional): End of time range of messages to include in results
+  - `oldest` (optional): Start of time range of messages to include in results
+  - `inclusive` (optional): Include messages with latest or oldest timestamp  
+  - `limit` (optional): Maximum number of replies to return (default: 100)
+  
+  ## Response
+  - Complex replies data structure containing thread messages
+  - Returns 500 error if Slack API is not accessible
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return replies data", function () {
+    const data = res.getBody();
+    expect(data).to.be.an('object');
+  });
+}

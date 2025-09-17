@@ -1,0 +1,37 @@
+meta {
+  name: API Status
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/status
+}
+
+docs {
+  # API Status Endpoint
+  
+  Returns comprehensive status information about the API including all available endpoints.
+  
+  ## Response
+  - `status`: Always returns "ready" when the API is operational
+  - `timestamp`: Current server timestamp in ISO format
+  - `endpoints`: Object containing all available API endpoints with their HTTP methods and paths
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return ready status", function () {
+    const data = res.getBody();
+    expect(data.status).to.equal("ready");
+  });
+  
+  test("should contain endpoints list", function () {
+    const data = res.getBody();
+    expect(data.endpoints).to.be.an('object');
+    expect(data.endpoints.health).to.equal('GET /health');
+  });
+}
