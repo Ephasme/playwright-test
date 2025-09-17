@@ -41,6 +41,7 @@ async function start() {
     fastify.log.info('  - GET /api/status - API status with all endpoints');
     fastify.log.info('  - GET /api/slack/user-boot - User boot data');
     fastify.log.info('  - GET /api/slack/recent-messages - Recent messages');
+    fastify.log.info('  - GET /api/slack/channels - List accessible channels');
     fastify.log.info('  - GET /api/slack/conversations - List conversations');
     fastify.log.info('  - GET /api/slack/conversations/:channelId/history - Channel history');
     fastify.log.info('  - GET /api/slack/conversations/:channelId/replies/:timestamp - Thread replies');

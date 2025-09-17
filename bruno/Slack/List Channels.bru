@@ -1,0 +1,56 @@
+meta {
+  name: List Channels
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/slack/channels
+}
+
+docs {
+  # List Accessible Channels Endpoint
+  
+  Retrieves the list of all accessible channels from the Slack workspace using the user.boot internal API. This provides a quick way to get channel information without fetching the full user boot data.
+  
+  ## Response
+  - `channels`: Array of channel objects with complete channel information (id, name, type, members, etc.)
+  - `count`: Total number of accessible channels
+  - Returns 500 error if Slack API is not accessible
+  
+  ## Channel Object Structure
+  Each channel object includes:
+  - `id`: Channel ID
+  - `name`: Channel name
+  - `is_channel`, `is_group`, `is_im`, `is_mpim`: Channel type flags
+  - `is_private`: Whether the channel is private
+  - `is_archived`: Whether the channel is archived
+  - `creator`: Channel creator ID
+  - `topic`, `purpose`: Channel description information
+  - And many other properties defined in the ChannelSchema
+}
+
+tests {
+  test("should return 200 status", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  
+  test("should return channels array and count", function () {
+    const data = res.getBody();
+    expect(data).to.be.an('object');
+    expect(data.channels).to.be.an('array');
+    expect(data.count).to.be.a('number');
+    expect(data.count).to.equal(data.channels.length);
+  });
+  
+  test("should have valid channel objects", function () {
+    const data = res.getBody();
+    if (data.channels.length > 0) {
+      const channel = data.channels[0];
+      expect(channel).to.have.property('id');
+      expect(channel).to.have.property('name');
+      expect(channel).to.have.property('is_channel');
+      expect(channel).to.have.property('is_private');
+    }
+  });
+}

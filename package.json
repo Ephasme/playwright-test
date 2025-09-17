@@ -7,7 +7,7 @@
     "start": "node --env-file=.env dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
-    "dev": "tsx --env-file=.env src/index.ts",
+    "dev": "tsx watch --env-file=.env src/index.ts",
     "dev:slack-channels": "tsx --env-file=.env src/examples/slack-channels-example.ts",
     "dev:slack-refresh": "tsx --env-file=.env src/examples/slack-token-refresh-example.ts",
     "lint": "eslint .",

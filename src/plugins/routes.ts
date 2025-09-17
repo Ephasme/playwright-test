@@ -15,6 +15,7 @@ import {
     ApiStatusResponseSchema,
     ErrorResponseSchema
 } from '../types/index.js';
+import { ChannelSchema } from '../types/channel/index.js';
 import type { RoutesPluginOptions } from '../types/index.js';
 
 // Helper function to remove undefined values from objects while preserving type safety
@@ -100,6 +101,7 @@ async function routesPlugin(fastify: FastifyInstance, options: RoutesPluginOptio
                     health: 'GET /health',
                     userBoot: 'GET /api/slack/user-boot',
                     recentMessages: 'GET /api/slack/recent-messages',
+                    channels: 'GET /api/slack/channels',
                     conversations: 'GET /api/slack/conversations',
                     conversationHistory: 'GET /api/slack/conversations/:channelId/history',
                     conversationReplies: 'GET /api/slack/conversations/:channelId/replies/:timestamp',
@@ -149,6 +151,35 @@ async function routesPlugin(fastify: FastifyInstance, options: RoutesPluginOptio
                 fastify.log.error('Error getting recent messages: ' + (error instanceof Error ? error.message : String(error)));
                 reply.code(500);
                 return { error: 'Failed to get recent messages' };
+            }
+        },
+    });
+
+    // Get accessible channels from user.boot data
+    fastify.withTypeProvider<ZodTypeProvider>().route({
+        method: 'GET',
+        url: '/api/slack/channels',
+        schema: {
+            response: {
+                200: z.object({
+                    channels: z.array(ChannelSchema),
+                    count: z.number(),
+                }),
+                500: ErrorResponseSchema,
+            },
+        },
+        handler: async (request, reply) => {
+            try {
+                const userBootData = await fastify.slackApi.clientUserBoot(fastify.workspaceUrl);
+                const channels = userBootData.channels || [];
+                return {
+                    channels,
+                    count: channels.length,
+                };
+            } catch (error) {
+                fastify.log.error('Error getting channels list: ' + (error instanceof Error ? error.message : String(error)));
+                reply.code(500);
+                return { error: 'Failed to get channels list' };
             }
         },
     });
