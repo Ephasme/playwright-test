@@ -23,8 +23,6 @@ export class SlackApiFactory {
             this.cookiesLoader,
             this.workspaceUrl
         );
-        console.log('✅ Captured token:', authResult.token);
-        console.log('✅ Captured cookies:', authResult.cookies.length);
 
         // Clean up the browser context
         await context.close();

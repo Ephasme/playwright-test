@@ -1,4 +1,4 @@
-import { type RawCookie, type PlaywrightCookie } from './types.js';
+import { type RawCookie, type PlaywrightCookie } from '../types/index.js';
 
 /**
  * Maps sameSite value from raw cookie format to Playwright format

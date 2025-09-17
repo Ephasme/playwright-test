@@ -1,7 +1,8 @@
 import type { Cookie } from "playwright";
 import axios from "axios";
+import { randomUUID } from "crypto";
 import { type UserBootData, type ConversationHistoryResponse, type Channel, type ChatMessage } from "../types/index.js";
-import { type ChannelWithMessages, type RecentMessagesResponse } from "./types.js";
+import { type ChannelWithMessages, type RecentMessagesResponse, type ConversationRepliesOptions, type ConversationRepliesResponse, type PostMessageOptions, type PostMessageResponse, type DeleteMessageOptions, type DeleteMessageResponse } from "../types/index.js";
 import fs from "fs";
 import path from "path";
 
@@ -66,10 +67,6 @@ export class SlackApi {
         const formData = this.createBaseFormData(params);
         const headers = this.createBaseHeaders(referer);
 
-        console.log('🔍 Making Slack API request to:', endpoint);
-        console.log('🎯 Token (first 20 chars):', this.token.substring(0, 20) + '...');
-        console.log('🍪 Cookie count:', this.cookies.length);
-        console.log('📝 Form data being sent:', formData.toString());
 
         const response = await axios.post(endpoint, formData, {
             headers,
@@ -78,17 +75,12 @@ export class SlackApi {
             validateStatus: (status) => status < 400
         });
 
-        console.log('✅ API Response status:', response.status);
-        console.log('📊 Response content type:', response.headers['content-type']);
 
         // Check if we got HTML (login page) instead of JSON
         if (typeof response.data === 'string' && response.data.includes('<html>')) {
             throw new Error('Received HTML response (likely login page) - authentication failed. Check your token and cookie.');
         }
 
-        // Log the actual response structure for debugging
-        console.log('📋 Response data keys:', Object.keys(response.data));
-        console.log('📋 Response.ok value:', response.data.ok);
 
         if (!response.data.ok) {
             // Much more detailed error information
@@ -134,23 +126,12 @@ export class SlackApi {
             '_x_app_name': 'client'
         };
 
-        console.log('🌍 Workspace URL:', workspaceUrl);
 
         const response = await this.makeSlackApiRequest(endpoint, params, workspaceUrl);
 
         // Use type assertion instead of validation
         const validatedData = response as UserBootData;
 
-        console.log('✅ UserBoot response processed successfully!');
-        console.log(`📋 Found ${validatedData.channels?.length || 0} channels in userBoot response`);
-        console.log(`👤 User: ${validatedData.self?.real_name || 'Unknown'}`);
-        console.log(`🏢 Team: ${validatedData.team?.name || 'Unknown'}`);
-
-        // Note: Unread message information might be stored elsewhere in the userBootData
-        // The channels array doesn't contain unread_count_display in the actual structure
-        if (validatedData.channels) {
-            console.log(`📋 Available channels: ${validatedData.channels.slice(0, 5).map(c => c.name).join(', ')}${validatedData.channels.length > 5 ? '...' : ''}`);
-        }
 
         return validatedData;
     }
@@ -175,37 +156,203 @@ export class SlackApi {
      * Gets message history from a specific conversation/channel
      * This is equivalent to slackdump's conversations.history endpoint
      * Can be used to get recent messages or filter for unread content
-     * Now validates the response using Zod schemas for type safety.
+     * Now supports all real Slack API parameters as captured from browser FormData
      */
     async getConversationHistory(
         channelId: string,
         options: {
-            oldest?: string,        // Timestamp - get messages after this
-            latest?: string,        // Timestamp - get messages before this  
-            limit?: number,         // Number of messages to return
-            inclusive?: boolean     // Include messages with latest and oldest timestamps
+            oldest?: string,                           // Timestamp - get messages after this
+            latest?: string,                           // Timestamp - get messages before this  
+            limit?: number,                            // Number of messages to return
+            inclusive?: boolean,                       // Include messages with latest and oldest timestamps
+            ignore_replies?: boolean,                  // Ignore threaded replies
+            include_pin_count?: boolean,               // Include pin count information
+            no_user_profile?: boolean,                 // Don't include user profile information
+            include_stories?: boolean,                 // Include stories in response
+            include_free_team_extra_messages?: boolean, // Include extra messages for free teams
+            include_date_joined?: boolean,             // Include date joined information
+            cached_latest_updates?: Record<string, string> // Cache info for latest updates
         } = {}
     ): Promise<ConversationHistoryResponse> {
         const endpoint = 'https://app.slack.com/api/conversations.history';
 
         const params: Record<string, string> = {
             'channel': channelId,
-            'limit': (options.limit || 100).toString()
+            'limit': (options.limit || 28).toString() // Default to 28 like the real client
         };
 
+        // Basic timestamp parameters
         if (options.oldest) params.oldest = options.oldest;
         if (options.latest) params.latest = options.latest;
         if (options.inclusive !== undefined) params.inclusive = options.inclusive.toString();
+
+        // Boolean flags - convert to string
+        if (options.ignore_replies !== undefined) params.ignore_replies = options.ignore_replies.toString();
+        if (options.include_pin_count !== undefined) params.include_pin_count = options.include_pin_count.toString();
+        if (options.no_user_profile !== undefined) params.no_user_profile = options.no_user_profile.toString();
+        if (options.include_stories !== undefined) params.include_stories = options.include_stories.toString();
+        if (options.include_free_team_extra_messages !== undefined) params.include_free_team_extra_messages = options.include_free_team_extra_messages.toString();
+        if (options.include_date_joined !== undefined) params.include_date_joined = options.include_date_joined.toString();
+
+        // Cached updates - JSON stringify the object
+        if (options.cached_latest_updates) params.cached_latest_updates = JSON.stringify(options.cached_latest_updates);
+
+        // Internal Slack tracking parameters - hardcoded to mimic real client behavior
+        params._x_reason = 'message-pane/requestHistory';
+        params._x_mode = 'online';
+        params._x_sonic = 'true';
+        params._x_app_name = 'client';
 
         const response = await this.makeSlackApiRequest(endpoint, params);
 
         // Use type assertion instead of validation
         const validatedData = response as ConversationHistoryResponse;
 
-        console.log('✅ Conversation history response processed successfully!');
-        console.log(`📨 Found ${validatedData.messages?.length || 0} messages in response`);
 
         return validatedData;
+    }
+
+    /**
+     * Gets replies to a specific message in a conversation/channel thread
+     * This is equivalent to the Slack web client's conversations.replies endpoint
+     * Used to fetch threaded replies to a parent message
+     */
+    async getConversationReplies(
+        channelId: string,
+        messageTimestamp: string,
+        options: {
+            inclusive?: boolean;                           // Include the parent message in results
+            limit?: number;                                // Number of replies to return
+            oldest?: string;                               // Oldest message timestamp to include
+            latest?: string;                               // Latest message timestamp to include
+            cached_latest_updates?: Record<string, string> // Cache info for latest updates
+        } = {}
+    ): Promise<ConversationRepliesResponse> {
+        const endpoint = 'https://app.slack.com/api/conversations.replies';
+
+        const params: Record<string, string> = {
+            'channel': channelId,
+            'ts': messageTimestamp,
+            'limit': (options.limit || 28).toString() // Default to 28 like the real client
+        };
+
+        // Basic parameters
+        if (options.inclusive !== undefined) params.inclusive = options.inclusive.toString();
+        if (options.oldest) params.oldest = options.oldest;
+        if (options.latest) params.latest = options.latest;
+
+        // Cached updates - JSON stringify the object
+        if (options.cached_latest_updates) params.cached_latest_updates = JSON.stringify(options.cached_latest_updates);
+
+        // Internal Slack tracking parameters - hardcoded to mimic real client behavior
+        params._x_reason = 'history-api/fetchReplies';
+        params._x_mode = 'online';
+        params._x_sonic = 'true';
+        params._x_app_name = 'client';
+
+        const response = await this.makeSlackApiRequest(endpoint, params);
+
+        // Use type assertion to match existing pattern
+        const validatedData = response as ConversationRepliesResponse;
+
+
+        return validatedData;
+    }
+
+    /**
+     * Posts a message to a Slack channel
+     * This is equivalent to the Slack web client's chat.postMessage endpoint
+     * Supports both plain text and rich text blocks (Block Kit format)
+     */
+    async postMessage(options: PostMessageOptions): Promise<PostMessageResponse> {
+        const endpoint = 'https://app.slack.com/api/chat.postMessage';
+
+        const params: Record<string, string> = {
+            'channel': options.channel,
+            'type': options.type || 'message'
+        };
+
+        // Message content - prefer blocks over text for rich formatting
+        if (options.blocks) {
+            params.blocks = JSON.stringify(options.blocks);
+        } else if (options.text) {
+            params.text = options.text;
+        }
+
+        // Optional parameters
+        if (options.ts) params.ts = options.ts;
+        if (options.thread_ts) params.thread_ts = options.thread_ts;
+        if (options.xArgs) params.xArgs = JSON.stringify(options.xArgs);
+        if (options.unfurl) params.unfurl = JSON.stringify(options.unfurl);
+        if (options.client_context_team_id) params.client_context_team_id = options.client_context_team_id;
+        if (options.draft_id) params.draft_id = options.draft_id;
+        if (options.include_channel_perm_error !== undefined) params.include_channel_perm_error = options.include_channel_perm_error.toString();
+
+        // Generate client_msg_id if not provided (for message tracking)
+        params.client_msg_id = options.client_msg_id || randomUUID();
+
+        // Internal Slack tracking parameters - hardcoded to mimic real client behavior
+        params._x_reason = 'webapp_message_send';
+        params._x_mode = 'online';
+        params._x_sonic = 'true';
+        params._x_app_name = 'client';
+
+        const response = await this.makeSlackApiRequest(endpoint, params);
+
+        // Use type assertion to match existing pattern
+        const validatedData = response as PostMessageResponse;
+
+        return validatedData;
+    }
+
+    /**
+     * Deletes a message from a Slack channel
+     * This is equivalent to the Slack web client's chat.delete endpoint
+     * Requires the channel ID and message timestamp to identify the message to delete
+     */
+    async deleteMessage(options: DeleteMessageOptions): Promise<DeleteMessageResponse> {
+        const endpoint = 'https://app.slack.com/api/chat.delete';
+
+        const params: Record<string, string> = {
+            'channel': options.channel,
+            'ts': options.ts
+        };
+
+        // Internal Slack tracking parameters - hardcoded to mimic real client behavior
+        params._x_reason = 'animateAndDeleteMessageApi';
+        params._x_mode = 'online';
+        params._x_sonic = 'true';
+        params._x_app_name = 'client';
+
+        const response = await this.makeSlackApiRequest(endpoint, params);
+
+        // Use type assertion to match existing pattern
+        const validatedData = response as DeleteMessageResponse;
+
+        return validatedData;
+    }
+
+    /**
+     * Helper method to create a simple text message using Block Kit format
+     * This is useful when you want to send formatted text messages
+     */
+    createTextBlocks(text: string): any[] {
+        return [
+            {
+                type: "rich_text",
+                elements: [
+                    {
+                        type: "rich_text_section",
+                        elements: [
+                            {
+                                type: "text",
+                                text: text
+                            }
+                        ]
+                    }
+                ]
+            }
+        ];
     }
 
     /**
@@ -215,7 +362,6 @@ export class SlackApi {
      * Now returns properly typed response with full type safety.
      */
     async getRecentMessages(workspaceUrl: string): Promise<RecentMessagesResponse> {
-        console.log('🔍 Starting recent messages collection...');
 
         // First get the bootstrap data with channel information
         const userBootData = await this.clientUserBoot(workspaceUrl);
@@ -226,18 +372,23 @@ export class SlackApi {
 
         // Note: Since unread_count_display is not part of the actual channel structure,
         // we'll get recent messages from all channels instead
-        console.log(`🎯 Getting recent messages from first 5 channels as example...`);
 
         const unreadResults: ChannelWithMessages[] = [];
         const sampleChannels = userBootData.channels.slice(0, 5); // Just sample first 5 channels
 
         for (const channel of sampleChannels) {
             try {
-                console.log(`📨 Getting recent messages from ${channel.name}...`);
 
-                // Get recent message history (limit to 20 messages per channel)
+                // Get recent message history with realistic Slack client parameters
                 const history = await this.getConversationHistory(channel.id, {
-                    limit: 20
+                    limit: 28,                               // Default from real client
+                    ignore_replies: true,                    // Ignore threaded replies like real client
+                    include_pin_count: true,                 // Include pin count info
+                    inclusive: true,                         // Include boundary messages
+                    no_user_profile: true,                   // Don't fetch user profiles for performance
+                    include_stories: true,                   // Include stories
+                    include_free_team_extra_messages: true,  // Include extra messages
+                    include_date_joined: false               // Don't include join dates
                 });
 
                 fs.writeFileSync(path.join('exports', `${channel.name}.json`), JSON.stringify(history, null, 2));

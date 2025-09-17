@@ -1,0 +1,59 @@
+import fp from 'fastify-plugin';
+import { chromium, type Browser } from 'playwright';
+import { Storage } from '@google-cloud/storage';
+import { makeCookiesLoader } from '../cookie-management/index.js';
+import { config } from '../config/index.js';
+import { SlackApi, SlackApiFactory } from '../slack-api/index.js';
+import type { FastifyInstance } from 'fastify';
+import type { SlackApiPluginOptions } from '../types/index.js';
+
+async function slackApiPlugin(fastify: FastifyInstance, options: SlackApiPluginOptions) {
+    fastify.log.info('🔄 Initializing Slack API plugin...');
+
+    try {
+        // Create Google Cloud Storage instance
+        const storage = new Storage({
+            projectId: config.gcp.projectId,
+            keyFilename: config.gcp.credentialsPath,
+        });
+
+        // Load and transform cookies from GCP
+        const loadCookies = makeCookiesLoader(storage, {
+            bucketName: config.gcs.bucketName,
+            fileName: config.gcs.cookiesFileName,
+        });
+
+        // Launch browser
+        const browser = await chromium.launch();
+
+        // Get workspace URL from config
+        const workspaceUrl = `${config.slack.baseUrl}/${config.slack.teamId}`;
+
+        // Create Slack API instance
+        const slackApiFactory = new SlackApiFactory(loadCookies, workspaceUrl, browser);
+        const slackApi = await slackApiFactory.createSlackApi();
+
+        // Decorate Fastify instance with our dependencies
+        fastify.decorate('slackApi', slackApi);
+        fastify.decorate('browser', browser);
+        fastify.decorate('workspaceUrl', workspaceUrl);
+
+        // Register shutdown hook to clean up browser
+        fastify.addHook('onClose', async () => {
+            if (browser) {
+                await browser.close();
+                fastify.log.info('🔌 Browser closed');
+            }
+        });
+
+        fastify.log.info('✅ Slack API plugin initialized successfully');
+    } catch (error) {
+        fastify.log.error('❌ Failed to initialize Slack API plugin: ' + (error instanceof Error ? error.message : String(error)));
+        throw error;
+    }
+}
+
+export default fp(slackApiPlugin, {
+    name: 'slack-api',
+    fastify: '5.x'
+});

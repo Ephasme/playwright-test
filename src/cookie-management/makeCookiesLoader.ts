@@ -4,7 +4,7 @@ import {
     RawCookiesArraySchema,
     type PlaywrightCookie,
     type GCPStorageConfig
-} from './types.js';
+} from '../types/index.js';
 
 export type CookiesLoader = () => Promise<PlaywrightCookie[]>
 
