@@ -33,6 +33,7 @@ export default defineConfig([
             '*.config.mjs',
             '.next/**',
             'coverage/**',
+            '.cache/**',
         ],
     },
 ]);
