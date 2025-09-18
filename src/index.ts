@@ -2,6 +2,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { slackApiPlugin, routesPlugin } from './plugins/index.js';
+import { config } from './config/index.js';
 
 // Create Fastify server instance with logging enabled
 const fastify = Fastify({
@@ -32,8 +33,8 @@ await fastify.register(routesPlugin);
 async function start() {
   try {
     // Start the server - Slack API initialization is handled by the plugin during registration
-    const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-    const address = await fastify.listen({ port, host: '0.0.0.0' });
+    const { host, port } = config.server;
+    const address = await fastify.listen({ port, host });
 
     fastify.log.info(`🚀 Server listening at ${address}`);
     fastify.log.info('📱 Available API endpoints:');

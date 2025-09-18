@@ -10,6 +10,12 @@ import env from 'env-var';
  * - GOOGLE_CREDENTIALS_BASE64: Base64-encoded JSON credentials (for production/Railway deployment)
  */
 export const config = {
+    // Server configuration
+    server: {
+        host: env.get('HOST').default('0.0.0.0').asString(),
+        port: env.get('PORT').default(3000).asPortNumber(),
+    },
+
     // Google Cloud Platform configuration
     gcp: {
         projectId: env.get('GCP_PROJECT_ID').required().asString(),
