@@ -4,8 +4,6 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { type ClientUserBootResponse, type ConversationHistoryResponse, ConversationHistoryResponseSchema } from "../types/index.js";
 import { type SlackConversationsListResponse, type ChannelWithMessages, type RecentMessagesResponse, type ConversationRepliesResponse, type PostMessageOptions, type PostMessageResponse, type DeleteMessageOptions, type DeleteMessageResponse, SlackApiResponseSchema, SlackConversationsListResponseSchema, ClientUserBootResponseSchema, ConversationRepliesResponseSchema, PostMessageResponseSchema, DeleteMessageResponseSchema } from "../types/index.js";
-import fs from "fs";
-import path from "path";
 
 export class SlackApi {
     private token: string;
@@ -379,8 +377,6 @@ export class SlackApi {
                     include_free_team_extra_messages: true,  // Include extra messages
                     include_date_joined: false               // Don't include join dates
                 });
-
-                fs.writeFileSync(path.join('exports', `${channel.name}.json`), JSON.stringify(history, null, 2));
 
                 unreadResults.push({
                     channel: {
