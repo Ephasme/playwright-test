@@ -83,6 +83,8 @@ export class SlackApi {
             throw new Error('Received HTML response (likely login page) - authentication failed. Check your token and cookie.');
         }
 
+        console.log('response.data', JSON.stringify(response.data, null, 2));
+
         // First validate the basic Slack API response structure
         const baseResponse = SlackApiResponseSchema.parse(response.data);
 

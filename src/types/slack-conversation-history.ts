@@ -1,19 +1,17 @@
 import { z } from 'zod';
-import { SlackApiResponseSchema } from './slack-api/index.js';
+import { SlackApiResponseSchema, SlackResponseMetadataSchema } from './slack-api/index.js';
 
 export const ChatMessageSchema = z.object({
     text: z.string(),
 })
 
 export const ConversationHistoryResponseSchema = SlackApiResponseSchema.extend({
-    messages: z.array(ChatMessageSchema),
-    has_more: z.boolean(),
-    pin_count: z.number(),
-    channel_actions_ts: z.string().nullable(),
-    channel_actions_count: z.number(),
-    response_metadata: z.object({
-        next_cursor: z.string().nullable(),
-    }),
+    messages: z.array(z.record(z.string(), z.unknown())), // Flexible message objects from Slack API
+    has_more: z.boolean().optional(),
+    pin_count: z.number().optional(),
+    channel_actions_ts: z.string().nullable().optional(),
+    channel_actions_count: z.number().optional(),
+    response_metadata: SlackResponseMetadataSchema.optional(), // Only present when pagination is needed
 });
 
 export type ConversationHistoryResponse = z.infer<typeof ConversationHistoryResponseSchema>;
