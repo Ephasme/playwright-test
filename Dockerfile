@@ -11,6 +11,10 @@ WORKDIR /app
 # Enable corepack to use pnpm
 RUN corepack enable
 
+# Set corepack cache directory
+ENV COREPACK_HOME=/app/.cache
+RUN mkdir -p /app/.cache
+
 # Copy package manager files
 COPY package.json pnpm-lock.yaml ./
 
@@ -51,7 +55,13 @@ COPY --from=builder /app/dist ./dist
 
 # Create a non-root user for security
 RUN groupadd -r appuser && useradd -r -g appuser appuser
-RUN chown -R appuser:appuser /app
+
+# Create cache directory for corepack and set proper permissions
+RUN mkdir -p /app/.cache && chown -R appuser:appuser /app
+
+# Set environment variable to use app directory for corepack cache
+ENV COREPACK_HOME=/app/.cache
+
 USER appuser
 
 # Expose port (adjust if your app uses a different port)
