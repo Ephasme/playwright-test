@@ -13,14 +13,14 @@ import {
     DeleteMessageBodySchema,
     HealthResponseSchema,
     ApiStatusResponseSchema,
-    ErrorResponseSchema
+    ErrorResponseSchema,
+    type PostMessageOptions
 } from '../types/index.js';
 import { ChannelSchema } from '../types/channel/index.js';
-import type { RoutesPluginOptions } from '../types/index.js';
 
 // Helper function to remove undefined values from objects while preserving type safety
-function filterDefined<T extends Record<string, any>>(obj: T): any {
-    const result: any = {};
+function filterDefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
         if (value !== undefined) {
             result[key] = value;
@@ -29,9 +29,13 @@ function filterDefined<T extends Record<string, any>>(obj: T): any {
     return result;
 }
 
-async function routesPlugin(fastify: FastifyInstance, options: RoutesPluginOptions) {
+function routesPlugin(fastify: FastifyInstance) {
     // Set up Zod validator and serializer compilers
     fastify.setValidatorCompiler(validatorCompiler);
+    // TODO: Remove this ESLint disable when issue is fixed in fastify-type-provider-zod
+    // Issue: serializerCompiler uses union type that triggers @typescript-eslint/no-unsafe-argument
+    // See: https://github.com/turkerdev/fastify-type-provider-zod/issues/212
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     fastify.setSerializerCompiler(serializerCompiler);
 
     // Add custom error handler for Zod validation errors
@@ -75,7 +79,7 @@ async function routesPlugin(fastify: FastifyInstance, options: RoutesPluginOptio
                 200: HealthResponseSchema,
             },
         },
-        handler: async (request, reply) => {
+        handler: () => {
             return {
                 status: 'healthy' as const,
                 timestamp: new Date().toISOString(),
@@ -93,7 +97,7 @@ async function routesPlugin(fastify: FastifyInstance, options: RoutesPluginOptio
                 200: ApiStatusResponseSchema,
             },
         },
-        handler: async (request, reply) => {
+        handler: () => {
             return {
                 status: 'ready' as const,
                 timestamp: new Date().toISOString(),
@@ -118,14 +122,14 @@ async function routesPlugin(fastify: FastifyInstance, options: RoutesPluginOptio
         url: '/api/slack/user-boot',
         schema: {
             response: {
-                200: z.any(), // UserBoot data structure is complex, using any for now
+                200: z.any(), // ClientUserBoot data structure is complex, using any for now
                 500: ErrorResponseSchema,
             },
         },
-        handler: async (request, reply) => {
+        handler: async (_request, reply) => {
             try {
-                const userBootData = await fastify.slackApi.clientUserBoot(fastify.workspaceUrl);
-                return userBootData;
+                const clientUserBootData = await fastify.slackApi.clientUserBoot(fastify.workspaceUrl);
+                return clientUserBootData;
             } catch (error) {
                 fastify.log.error('Error getting user boot data: ' + (error instanceof Error ? error.message : String(error)));
                 reply.code(500);
@@ -143,7 +147,7 @@ async function routesPlugin(fastify: FastifyInstance, options: RoutesPluginOptio
                 500: ErrorResponseSchema,
             },
         },
-        handler: async (request, reply) => {
+        handler: async (_request, reply) => {
             try {
                 const recentMessages = await fastify.slackApi.getRecentMessages(fastify.workspaceUrl);
                 return recentMessages;
@@ -168,10 +172,10 @@ async function routesPlugin(fastify: FastifyInstance, options: RoutesPluginOptio
                 500: ErrorResponseSchema,
             },
         },
-        handler: async (request, reply) => {
+        handler: async (_request, reply) => {
             try {
-                const userBootData = await fastify.slackApi.clientUserBoot(fastify.workspaceUrl);
-                const channels = userBootData.channels || [];
+                const clientUserBootData = await fastify.slackApi.clientUserBoot(fastify.workspaceUrl);
+                const channels = clientUserBootData.channels || [];
                 return {
                     channels,
                     count: channels.length,
@@ -276,7 +280,7 @@ async function routesPlugin(fastify: FastifyInstance, options: RoutesPluginOptio
         },
         handler: async (request, reply) => {
             try {
-                const options = filterDefined(request.body);
+                const options = filterDefined(request.body) as unknown as PostMessageOptions;
                 const result = await fastify.slackApi.postMessage(options);
                 return result;
             } catch (error) {

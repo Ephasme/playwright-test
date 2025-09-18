@@ -57,7 +57,7 @@ export async function interceptSlackAuthWithCookies(
     workspaceUrl: string
 ): Promise<{ token: string, cookies: Cookie[] }> {
 
-    let capturedToken: string | null = null;
+    // Variable removed - token is captured via promise resolver
 
     // Load your existing cookies first
     const existingCookies = await cookiesLoader();
@@ -70,17 +70,16 @@ export async function interceptSlackAuthWithCookies(
         }, 30000);
 
         // Set up token interception BEFORE navigation  
-        page.route('**/api/api.features*', route => {
+        void page.route('**/api/api.features*', async route => {
             const formData = route.request().postData();
             if (formData) {
                 const token = extractTokenFromFormData(formData);
                 if (token?.startsWith('xoxc-')) {
-                    capturedToken = token;
                     clearTimeout(timeout);
                     resolve(token);
                 }
             }
-            route.continue();
+            await route.continue();
         });
     });
 

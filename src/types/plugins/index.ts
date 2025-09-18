@@ -1,4 +1,4 @@
-import type { FastifyPluginOptions, FastifyInstance } from 'fastify';
+import type { FastifyPluginOptions } from 'fastify';
 import type { Browser } from 'playwright';
 import type { SlackApi } from '../../slack-api/index.js';
 
@@ -12,10 +12,6 @@ declare module 'fastify' {
 }
 
 // Plugin options interfaces
-export interface SlackApiPluginOptions extends FastifyPluginOptions {
-    // Add any plugin-specific options here if needed
-}
+export type SlackApiPluginOptions = FastifyPluginOptions;
 
-export interface RoutesPluginOptions extends FastifyPluginOptions {
-    // Add any plugin-specific options here if needed
-}
+export type RoutesPluginOptions = FastifyPluginOptions;

@@ -20,6 +20,8 @@ export default defineConfig([
     {
         files: ['**/*.{js,mjs,cjs,ts}'],
         rules: {
+            // Prevent usage of deprecated methods
+            '@typescript-eslint/no-deprecated': 'error',
             // Add any custom rules here
         },
     },

@@ -1,8 +1,9 @@
 import type { Cookie } from "playwright";
 import axios from "axios";
 import { randomUUID } from "crypto";
-import { type UserBootData, type ConversationHistoryResponse, type Channel, type ChatMessage } from "../types/index.js";
-import { type ChannelWithMessages, type RecentMessagesResponse, type ConversationRepliesOptions, type ConversationRepliesResponse, type PostMessageOptions, type PostMessageResponse, type DeleteMessageOptions, type DeleteMessageResponse } from "../types/index.js";
+import { z } from "zod";
+import { type ClientUserBootResponse, type ConversationHistoryResponse, ConversationHistoryResponseSchema } from "../types/index.js";
+import { type SlackConversationsListResponse, type ChannelWithMessages, type RecentMessagesResponse, type ConversationRepliesResponse, type PostMessageOptions, type PostMessageResponse, type DeleteMessageOptions, type DeleteMessageResponse, SlackApiResponseSchema, SlackConversationsListResponseSchema, ClientUserBootResponseSchema, ConversationRepliesResponseSchema, PostMessageResponseSchema, DeleteMessageResponseSchema } from "../types/index.js";
 import fs from "fs";
 import path from "path";
 
@@ -61,12 +62,16 @@ export class SlackApi {
     }
 
     /**
-     * Makes a generic Slack API request
+     * Makes a generic Slack API request with schema validation
      */
-    private async makeSlackApiRequest(endpoint: string, params: Record<string, string> = {}, referer?: string): Promise<any> {
+    private async makeSlackApiRequest<T extends z.ZodType>(
+        endpoint: string,
+        schema: T,
+        params: Record<string, string> = {},
+        referer?: string
+    ): Promise<z.infer<T>> {
         const formData = this.createBaseFormData(params);
         const headers = this.createBaseHeaders(referer);
-
 
         const response = await axios.post(endpoint, formData, {
             headers,
@@ -75,34 +80,36 @@ export class SlackApi {
             validateStatus: (status) => status < 400
         });
 
-
         // Check if we got HTML (login page) instead of JSON
         if (typeof response.data === 'string' && response.data.includes('<html>')) {
             throw new Error('Received HTML response (likely login page) - authentication failed. Check your token and cookie.');
         }
 
+        // First validate the basic Slack API response structure
+        const baseResponse = SlackApiResponseSchema.parse(response.data);
 
-        if (!response.data.ok) {
+        if (!baseResponse.ok) {
             // Much more detailed error information
             const errorDetails = {
-                ok: response.data.ok,
-                error: response.data.error,
-                warning: response.data.warning,
-                needed: response.data.needed,
-                provided: response.data.provided,
+                ok: baseResponse.ok,
+                error: baseResponse.error,
+                warning: baseResponse.warning,
+                needed: baseResponse.needed,
+                provided: baseResponse.provided,
                 endpoint: endpoint,
                 formData: formData.toString()
             };
 
             console.error('❌ Detailed Slack API error:', JSON.stringify(errorDetails, null, 2));
 
-            throw new Error(`Slack API error: ${response.data.error ||
-                response.data.warning ||
+            throw new Error(`Slack API error: ${baseResponse.error ||
+                baseResponse.warning ||
                 `API returned ok:false without error message. Endpoint: ${endpoint}`
                 }`);
         }
 
-        return response.data;
+        // Now validate and return with the specific schema
+        return schema.parse(response.data) as z.infer<T>;
     }
 
     /**
@@ -111,7 +118,7 @@ export class SlackApi {
      * Returns complete workspace data: channels, user info, settings, etc.
      * Now validates the response using Zod schemas for type safety.
      */
-    async clientUserBoot(workspaceUrl: string): Promise<UserBootData> {
+    async clientUserBoot(workspaceUrl: string): Promise<ClientUserBootResponse> {
         const endpoint = 'https://app.slack.com/api/client.userBoot';
 
         // client.userBoot specific parameters
@@ -127,11 +134,7 @@ export class SlackApi {
         };
 
 
-        const response = await this.makeSlackApiRequest(endpoint, params, workspaceUrl);
-
-        // Use type assertion instead of validation
-        const validatedData = response as UserBootData;
-
+        const validatedData = await this.makeSlackApiRequest(endpoint, ClientUserBootResponseSchema, params, workspaceUrl);
 
         return validatedData;
     }
@@ -140,7 +143,7 @@ export class SlackApi {
      * Gets all conversations (channels, DMs, groups) the user is part of
      * This is equivalent to slackdump's conversations.list endpoint
      */
-    async getConversationsList(types: string = 'public_channel,private_channel,mpim,im'): Promise<any> {
+    async getConversationsList(types: string = 'public_channel,private_channel,mpim,im'): Promise<SlackConversationsListResponse> {
         const endpoint = 'https://app.slack.com/api/conversations.list';
 
         const params = {
@@ -149,7 +152,7 @@ export class SlackApi {
             'limit': '1000'  // Get as many as possible in one call
         };
 
-        return await this.makeSlackApiRequest(endpoint, params);
+        return await this.makeSlackApiRequest(endpoint, SlackConversationsListResponseSchema, params);
     }
 
     /**
@@ -203,11 +206,7 @@ export class SlackApi {
         params._x_sonic = 'true';
         params._x_app_name = 'client';
 
-        const response = await this.makeSlackApiRequest(endpoint, params);
-
-        // Use type assertion instead of validation
-        const validatedData = response as ConversationHistoryResponse;
-
+        const validatedData = await this.makeSlackApiRequest(endpoint, ConversationHistoryResponseSchema, params);
 
         return validatedData;
     }
@@ -250,11 +249,7 @@ export class SlackApi {
         params._x_sonic = 'true';
         params._x_app_name = 'client';
 
-        const response = await this.makeSlackApiRequest(endpoint, params);
-
-        // Use type assertion to match existing pattern
-        const validatedData = response as ConversationRepliesResponse;
-
+        const validatedData = await this.makeSlackApiRequest(endpoint, ConversationRepliesResponseSchema, params);
 
         return validatedData;
     }
@@ -297,10 +292,7 @@ export class SlackApi {
         params._x_sonic = 'true';
         params._x_app_name = 'client';
 
-        const response = await this.makeSlackApiRequest(endpoint, params);
-
-        // Use type assertion to match existing pattern
-        const validatedData = response as PostMessageResponse;
+        const validatedData = await this.makeSlackApiRequest(endpoint, PostMessageResponseSchema, params);
 
         return validatedData;
     }
@@ -324,10 +316,7 @@ export class SlackApi {
         params._x_sonic = 'true';
         params._x_app_name = 'client';
 
-        const response = await this.makeSlackApiRequest(endpoint, params);
-
-        // Use type assertion to match existing pattern
-        const validatedData = response as DeleteMessageResponse;
+        const validatedData = await this.makeSlackApiRequest(endpoint, DeleteMessageResponseSchema, params);
 
         return validatedData;
     }
@@ -336,7 +325,7 @@ export class SlackApi {
      * Helper method to create a simple text message using Block Kit format
      * This is useful when you want to send formatted text messages
      */
-    createTextBlocks(text: string): any[] {
+    createTextBlocks(text: string): Record<string, unknown>[] {
         return [
             {
                 type: "rich_text",
@@ -357,24 +346,24 @@ export class SlackApi {
 
     /**
      * Helper method to get recent messages from sample channels
-     * This analyzes the userBoot response and fetches recent messages from a few channels
-     * Note: Unread information is not available in the channel objects from userBoot
+     * This analyzes the clientUserBoot response and fetches recent messages from a few channels
+     * Note: Unread information is not available in the channel objects from clientUserBoot
      * Now returns properly typed response with full type safety.
      */
     async getRecentMessages(workspaceUrl: string): Promise<RecentMessagesResponse> {
 
         // First get the bootstrap data with channel information
-        const userBootData = await this.clientUserBoot(workspaceUrl);
+        const clientUserBootData = await this.clientUserBoot(workspaceUrl);
 
-        if (!userBootData.channels) {
-            throw new Error('No channels found in userBoot response');
+        if (!clientUserBootData.channels) {
+            throw new Error('No channels found in clientUserBoot response');
         }
 
         // Note: Since unread_count_display is not part of the actual channel structure,
         // we'll get recent messages from all channels instead
 
         const unreadResults: ChannelWithMessages[] = [];
-        const sampleChannels = userBootData.channels.slice(0, 5); // Just sample first 5 channels
+        const sampleChannels = clientUserBootData.channels.slice(0, 5); // Just sample first 5 channels
 
         for (const channel of sampleChannels) {
             try {
@@ -413,7 +402,7 @@ export class SlackApi {
         return {
             total_channels_sampled: sampleChannels.length,
             sample_channels: unreadResults,
-            all_channels: userBootData.channels  // Include full channel data for reference
+            all_channels: clientUserBootData.channels  // Include full channel data for reference
         };
     }
 

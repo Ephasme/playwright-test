@@ -55,15 +55,15 @@ async function start() {
 }
 
 // Handle process termination
-process.on('SIGTERM', async () => {
+process.on('SIGTERM', () => {
   fastify.log.info('🛑 SIGTERM received, shutting down gracefully');
-  await fastify.close();
+  void fastify.close();
 });
 
-process.on('SIGINT', async () => {
+process.on('SIGINT', () => {
   fastify.log.info('🛑 SIGINT received, shutting down gracefully');
-  await fastify.close();
+  void fastify.close();
 });
 
 // Start the server
-start();
+void start();

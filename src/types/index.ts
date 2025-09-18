@@ -6,8 +6,7 @@ export * from './user/index.js';
 export * from './team/index.js';
 export * from './channel/index.js';
 
-// Export main UserBootData schema
-export * from './user-boot-data.js';
+// ClientUserBootResponse schema is now exported from slack-api/index.js
 
 // Export Slack conversation history schemas
 export * from './slack-conversation-history.js';

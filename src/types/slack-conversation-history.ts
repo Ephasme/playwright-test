@@ -1,11 +1,11 @@
 import { z } from 'zod';
+import { SlackApiResponseSchema } from './slack-api/index.js';
 
 export const ChatMessageSchema = z.object({
     text: z.string(),
 })
 
-export const ConversationHistoryResponseSchema = z.object({
-    ok: z.boolean(),
+export const ConversationHistoryResponseSchema = SlackApiResponseSchema.extend({
     messages: z.array(ChatMessageSchema),
     has_more: z.boolean(),
     pin_count: z.number(),

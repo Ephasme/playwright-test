@@ -1,13 +1,12 @@
 import fp from 'fastify-plugin';
-import { chromium, type Browser } from 'playwright';
+import { chromium } from 'playwright';
 import { Storage } from '@google-cloud/storage';
 import { makeCookiesLoader } from '../cookie-management/index.js';
 import { config } from '../config/index.js';
-import { SlackApi, SlackApiFactory } from '../slack-api/index.js';
+import { SlackApiFactory } from '../slack-api/index.js';
 import type { FastifyInstance } from 'fastify';
-import type { SlackApiPluginOptions } from '../types/index.js';
 
-async function slackApiPlugin(fastify: FastifyInstance, options: SlackApiPluginOptions) {
+async function slackApiPlugin(fastify: FastifyInstance) {
     fastify.log.info('🔄 Initializing Slack API plugin...');
 
     try {
@@ -22,7 +21,7 @@ async function slackApiPlugin(fastify: FastifyInstance, options: SlackApiPluginO
 
         // Use base64-encoded credentials from environment variable
         const decodedCredentials = Buffer.from(config.gcp.credentialsBase64, 'base64').toString('utf-8');
-        storageOptions.credentials = JSON.parse(decodedCredentials);
+        storageOptions.credentials = JSON.parse(decodedCredentials) as object;
         fastify.log.info('🔐 Using base64-encoded credentials from environment variable');
 
         const storage = new Storage(storageOptions);

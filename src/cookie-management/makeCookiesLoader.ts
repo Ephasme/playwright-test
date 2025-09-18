@@ -35,11 +35,8 @@ export function makeCookiesLoader(
             // Download file content as buffer
             const [contents] = await file.download();
 
-            // Parse JSON content
-            const cookiesData = JSON.parse(contents.toString('utf-8'));
-
             // Validate and transform cookies in one step
-            const rawCookies = RawCookiesArraySchema.parse(cookiesData);
+            const rawCookies = RawCookiesArraySchema.parse(JSON.parse(contents.toString('utf-8')));
             return rawCookies.map(transformCookie);
         } catch (error) {
             if (error instanceof Error) {
