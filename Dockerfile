@@ -11,10 +11,6 @@ WORKDIR /app
 # Enable corepack to use pnpm
 RUN corepack enable
 
-# Set corepack cache directory
-ENV COREPACK_HOME=/app/.cache
-RUN mkdir -p /app/.cache
-
 # Copy package manager files
 COPY package.json pnpm-lock.yaml ./
 
@@ -52,17 +48,6 @@ COPY --from=builder /app/dist ./dist
 
 # Note: google_credentials.json is now handled via environment variables
 # No need to copy the file since credentials are passed as GOOGLE_CREDENTIALS_BASE64
-
-# Create a non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser appuser
-
-# Create cache directory for corepack and set proper permissions
-RUN mkdir -p /app/.cache && chown -R appuser:appuser /app
-
-# Set environment variable to use app directory for corepack cache
-ENV COREPACK_HOME=/app/.cache
-
-USER appuser
 
 # Expose port (adjust if your app uses a different port)
 EXPOSE 3000
